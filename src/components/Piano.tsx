@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { isBlack, keyMap, noteName, pitches, sound } from '@/lib/music';
 import { Keyboard, Music2 } from 'lucide-react';
+import InstrumentPicker from './InstrumentPicker';
 
 export default function Piano({ volume }: { volume: number }) {
   const [active, setActive] = useState<number[]>([]);
@@ -21,7 +22,7 @@ export default function Piano({ volume }: { volume: number }) {
   }, [volume]);
   const whites = pitches.filter(p => !isBlack(p));
   return <section className="panel piano-panel">
-    <div className="section-heading"><div className="flex items-center gap-3"><Keyboard size={18} className="text-violet-400"/><h2>Live piano</h2><span className="tag">Grand Piano</span></div><span className="muted text-xs hidden sm:block">Keyboard kamu, instrumen kamu.</span></div>
+    <div className="section-heading flex-wrap gap-3"><div className="flex items-center gap-3"><Keyboard size={18} className="text-violet-400"/><h2>Live keyboard</h2></div><InstrumentPicker/></div>
     <div className="piano-scroll"><div className="piano-keys" style={{minWidth: 1000}}>
       {pitches.map(p => {
         const black = isBlack(p); const index = whites.filter(w => w < p).length;
