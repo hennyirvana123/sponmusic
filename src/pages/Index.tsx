@@ -6,7 +6,8 @@ import { toast } from 'sonner';
 import Piano from '@/components/Piano';
 import PianoRoll from '@/components/PianoRoll';
 import Visualizer from '@/components/Visualizer';
-import { demo, Project, sound, silence, setVolume, validProject } from '@/lib/music';
+import { demo, Project, sound, silence, setVolume, validProject, projectSteps } from '@/lib/music';
+import { importMidi } from '@/lib/import-midi';
 
 function initial(): Project { try { const p = JSON.parse(localStorage.getItem('sponmusic-current') || 'null'); if (validProject(p)) return p; } catch {} return demo; }
 export default function Index() {
@@ -28,21 +29,23 @@ export default function Index() {
   useEffect(() => { setVolume(volume); }, [volume]);
   useEffect(() => {
     if (!playing) return;
-    let index=0; let timer: ReturnType<typeof setTimeout>; let cancelled=false;
+    let position=0; let last=performance.now(); let timer: ReturnType<typeof setTimeout>; let cancelled=false;
+    let triggered=new Set<string>();
     const tick=() => {
       if(cancelled) return;
       const {project:p,loop:l,volume:v}=current.current;
-      if(index>=64) { if(l) index=0; else {setPlaying(false);setStep(0);return;} }
-      setStep(index);
-      p.notes.filter(n=>n.step===index).forEach(n=>sound(n.pitch,v,n.length*60/p.bpm/4));
-      index++; timer=setTimeout(tick,60/p.bpm/4*1000);
+      const now=performance.now();position+=(now-last)/1000*p.bpm/15;last=now;
+      if(position>=projectSteps(p.notes)) { if(l) {position=0;triggered=new Set();silence();} else {setPlaying(false);setStep(0);return;} }
+      setStep(Math.floor(position));
+      p.notes.filter(n=>n.step<=position&&!triggered.has(n.id)).forEach(n=>{triggered.add(n.id);const remaining=n.step+n.length-position;if(remaining>0)sound(n.pitch,v,remaining*15/p.bpm);});
+      timer=setTimeout(tick,10);
     };
     tick(); return ()=> {cancelled=true;clearTimeout(timer);silence();};
   },[playing]);
   const stop=()=>{setPlaying(false);setStep(0);silence();};
   const save=()=>{const next=[project,...saved.filter(p=>p.name!==project.name)].slice(0,30);try{localStorage.setItem('sponmusic-projects',JSON.stringify(next));setSaved(next);toast.success('Proyek tersimpan di browser');}catch{toast.error('Penyimpanan browser penuh atau tidak tersedia');}};
   const exportProject=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(project,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`${project.name || 'SPONMUSIC'}.sponmusic.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast.success('File proyek diekspor');};
-  const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error();const p=JSON.parse(await f.text());if(!validProject(p))throw Error();stop();setProject(p);toast.success('Proyek berhasil diimpor');}catch{toast.error('File proyek tidak valid. Gunakan file JSON SPONMUSIC.');}if(file.current)file.current.value='';};
+  const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error('File maksimal 2 MB.');const midi=/\.(mid|midi)$/i.test(f.name);const p=midi?await importMidi(f):JSON.parse(await f.text());if(!validProject(p))throw Error('File proyek tidak valid.');stop();setProject(p);setLoop(false);toast.success(midi?'MIDI diimpor. Semua track dimainkan dengan suara piano.':'Proyek berhasil diimpor');}catch(e){toast.error(e instanceof Error?e.message:'Impor gagal. Gunakan MIDI atau JSON SPONMUSIC.');}if(file.current)file.current.value='';};
   return <div className={`studio-shell ${mode==='visualizer'?'visualizer-mode':''}`}>
     <aside className="sidebar">
       <a href="/" className="brand"><span className="brand-icon"><AudioLines size={25}/></span><span>SPON<span className="brand-light">MUSIC</span><small>YOUR IDEAS. YOUR SOUND.</small></span></a>
@@ -74,9 +77,10 @@ export default function Index() {
         {mode==='visualizer'&&<Visualizer onRecordingChange={setRecording}/>}
         <Piano volume={volume}/>
         <div className="bottom-note"><span><Headphones size={15}/> Pakai headphone untuk pengalaman terbaik.</span><span>Dibuat untuk ide yang belum terdengar. <span className="text-violet-400">SPONMUSIC</span></span></div>
+        <p className="mt-3 text-xs text-purple-300">Impor .mid / .midi atau JSON · {projectSteps(project.notes)/16} bar · Semua track MIDI digabung sebagai piano. Posisi not mempertahankan timing MIDI; tampilan grid memakai 4/4.</p>
       </main>
     </div>
-    <input className="hidden" type="file" accept=".json,application/json" ref={file} onChange={e=>void loadFile(e.target.files?.[0])}/>
+    <input className="hidden" type="file" accept=".mid,.midi,.json,audio/midi,audio/x-midi,application/json" ref={file} onChange={e=>void loadFile(e.target.files?.[0])}/>
     <Dialog open={modal!==null} onOpenChange={v=>{if(!v)setModal(null);}}><DialogContent className="studio-dialog"><DialogHeader><DialogTitle>{modal==='projects'?'Proyek saya':'Keyboard jadi pianomu'}</DialogTitle></DialogHeader>{modal==='projects'?<div className="space-y-3">{saved.length===0?<p className="muted py-6">Belum ada proyek. Klik “Simpan proyek” untuk menyimpan melodi pertama kamu.</p>:saved.map((p,i)=><button key={i} className="saved-project" onClick={()=>{stop();setProject(p);setModal(null);}}><span className="project-art"><Music2/></span><span><b>{p.name}</b><small>{p.notes.length} notes · {p.bpm} BPM</small></span><Play size={16}/></button>)}</div>:<div className="help-content"><p>Mainkan piano dengan keyboard atau klik/sentuh tuts. Beberapa tombol bisa dimainkan bersamaan untuk chord.</p><h3>Tuts putih</h3><code>ZXCVBNMQWERTYUIOP</code><h3>Tuts hitam</h3><code>DFG1234567890</code><p>Tiga belas tuts hitam pertama memakai tombol DFG1234567890 dari kiri ke kanan. Tuts tambahan tanpa label keyboard bisa dimainkan lewat klik atau sentuh.</p><h3>Buat melodi di piano roll</h3><p>Klik grid untuk menambah not. Klik not untuk menghapusnya; seret ujung kanan not untuk mengatur panjangnya. Gulir untuk menemukan nada lainnya. Atur BPM, lalu tekan Play. Loop mengulang 4 bar.</p><p>Proyek aktif disimpan otomatis di browser ini. Simpan proyek untuk menambahkannya ke daftar, atau ekspor JSON sebagai cadangan. File proyek tidak berisi rekaman audio.</p></div>}</DialogContent></Dialog>
   </div>;
 }

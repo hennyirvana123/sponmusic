@@ -27,6 +27,7 @@ export default function Visualizer({ onRecordingChange }: { onRecordingChange: (
     });
     const c = canvas.current!;
     const g = c.getContext('2d')!;
+    const pitches = Array.from({length:128},(_,i)=>i);
     const whites = pitches.filter(p=>!isBlack(p));
     const w = c.width / whites.length;
     let frame=0;

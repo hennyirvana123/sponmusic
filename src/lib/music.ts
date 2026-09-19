@@ -71,8 +71,9 @@ export const demo: Project = { name: 'Midnight thoughts', bpm: 120, notes: [
   [69,48,4],[67,52,4],[64,56,4],[60,60,4],
   [48,0,8],[55,8,8],[50,16,8],[57,24,8],[48,32,8],[55,40,8],[53,48,8],[55,56,8]
 ].map(([pitch,step,length], i) => ({id: `demo-${i}`, pitch, step, length})) };
+export function projectSteps(notes: Note[]) { return Math.max(64, Math.ceil(notes.reduce((end, n) => Math.max(end, n.step + n.length), 0) / 16) * 16); }
 export function validProject(p: unknown): p is Project {
   if (!p || typeof p !== 'object') return false;
   const v = p as Project;
-  return typeof v.name === 'string' && v.name.length <= 100 && Number.isFinite(v.bpm) && v.bpm >= 40 && v.bpm <= 240 && Array.isArray(v.notes) && v.notes.length <= 3000 && new Set(v.notes.map(n => n?.id)).size === v.notes.length && v.notes.every(n => n && typeof n.id === 'string' && Number.isInteger(n.pitch) && n.pitch >= 48 && n.pitch <= 92 && Number.isInteger(n.step) && n.step >= 0 && n.step < 64 && Number.isInteger(n.length) && n.length >= 1 && n.length <= 64 - n.step);
+  return typeof v.name === 'string' && v.name.length <= 100 && Number.isFinite(v.bpm) && v.bpm >= 40 && v.bpm <= 240 && Array.isArray(v.notes) && v.notes.length <= 30000 && new Set(v.notes.map(n => n?.id)).size === v.notes.length && v.notes.every(n => n && typeof n.id === 'string' && Number.isInteger(n.pitch) && n.pitch >= 0 && n.pitch <= 127 && Number.isFinite(n.step) && n.step >= 0 && Number.isFinite(n.length) && n.length > 0 && n.step + n.length <= 65536);
 }
