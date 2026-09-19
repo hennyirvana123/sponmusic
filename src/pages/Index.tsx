@@ -13,9 +13,13 @@ import MidiTrackPicker from '@/components/MidiTrackPicker';
 function initial(): Project { try { const p = JSON.parse(localStorage.getItem('sponmusic-current') || 'null'); if (validProject(p)) return p; } catch {} return demo; }
 export default function Index() {
   const [midiImport,setMidiImport]=useState<MidiImport|null>(null);
+  const [midiSource,setMidiSource]=useState<MidiImport|null>(null);
   const [mode, setMode] = useState<'studio'|'visualizer'>('studio');
   const [recording, setRecording] = useState(false);
   const [project, setProject] = useState<Project>(initial);
+  const currentNoteIds = new Set(project.notes.map(n=>n.id));
+  const selectedTrackIds = midiSource?.tracks.filter(t=>t.notes.some(n=>currentNoteIds.has(n.id))).map(t=>t.id) ?? [];
+  const canReselect = !!midiSource && selectedTrackIds.length > 0;
   const [playing,setPlaying] = useState(false);
   const [step,setStep] = useState(0);
   const [loop,setLoop] = useState(true);
@@ -49,7 +53,8 @@ export default function Index() {
   const exportProject=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(project,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`${project.name || 'SPONMUSIC'}.sponmusic.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast.success('File proyek diekspor');};
   const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error('File maksimal 2 MB.');if(/\.(mid|midi)$/i.test(f.name)){const data=await readMidi(f);stop();setMidiImport(data);}else{const p=JSON.parse(await f.text());if(!validProject(p))throw Error('File proyek tidak valid.');stop();setProject(p);setLoop(false);toast.success('Proyek berhasil diimpor');}}catch(e){toast.error(e instanceof Error?e.message:'Impor gagal. Gunakan MIDI atau JSON SPONMUSIC.');}if(file.current)file.current.value='';};
   return <div className={`studio-shell ${mode==='visualizer'?'visualizer-mode':''}`}>
-    {midiImport&&<MidiTrackPicker data={midiImport} onClose={()=>setMidiImport(null)} onImport={p=>{stop();setProject(p);setLoop(false);setMidiImport(null);toast.success('Track terpilih diimpor, naik 1 oktaf.');}}/>}
+    {midiImport&&<MidiTrackPicker data={midiImport} initialIds={midiImport===midiSource?selectedTrackIds:undefined} onClose={()=>setMidiImport(null)} onImport={p=>{stop();setProject(midiImport===midiSource?{...p,name:project.name,bpm:project.bpm}:p);setMidiSource(midiImport);setLoop(false);setMidiImport(null);toast.success('Pilihan track diterapkan.');}}/>}
+    {canReselect&&<div className="fixed bottom-5 right-5 z-40 rounded-xl border border-purple-700 bg-purple-950 p-3 shadow-xl"><Button className="primary-button" disabled={recording} onClick={()=>{stop();setMidiImport(midiSource);}}><SlidersHorizontal size={16}/> Pilih ulang track MIDI</Button><p className="mt-2 max-w-64 text-xs text-purple-200">Mengganti pilihan memuat ulang not dari sumber MIDI, menggantikan edit piano roll. Tersedia selama sesi ini.</p></div>}
     <aside className="sidebar">
       <a href="/" className="brand"><span className="brand-icon"><AudioLines size={25}/></span><span>SPON<span className="brand-light">MUSIC</span><small>YOUR IDEAS. YOUR SOUND.</small></span></a>
       <div className="workspace-label">WORKSPACE</div>
