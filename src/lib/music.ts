@@ -7,7 +7,7 @@ const whites = pitches.filter(p => !isBlack(p));
 const blacks = pitches.filter(isBlack);
 export const keyMap: Record<string, number> = {};
 [...'ZXCVBNMQWERTYUIOP'].forEach((k, i) => keyMap[k.toLowerCase()] = whites[i]);
-[...'ASDFGHJ567890'].forEach((k, i) => keyMap[k.toLowerCase()] = blacks[i]);
+[...'DFG1234567890'].forEach((k, i) => keyMap[k.toLowerCase()] = blacks[i]);
 let ctx: AudioContext | undefined;
 let master: GainNode | undefined;
 const voices = new Set<() => void>();
