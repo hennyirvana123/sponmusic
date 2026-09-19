@@ -11,15 +11,19 @@ import { demo, Project, sound, silence, setVolume, validProject, projectSteps } 
 import { readMidi, MidiImport } from '@/lib/import-midi';
 import MidiTrackPicker from '@/components/MidiTrackPicker';
 import StudioExtras from '@/components/StudioExtras';
+import { useLocation } from 'react-router-dom';
 
 function initial(): Project { try { const p = JSON.parse(localStorage.getItem('sponmusic-current') || 'null'); if (validProject(p)) return p; } catch {} return demo; }
 export default function Index() {
+  const location=useLocation();
+  const entryMode=new URLSearchParams(location.search).get('mode');
   const [midiImport,setMidiImport]=useState<MidiImport|null>(null);
+  useEffect(()=>{const file=location.state?.midiFile;if(!(file instanceof File))return;let cancelled=false;readMidi(file).then(data=>{if(!cancelled)setMidiImport(data);}).catch(e=>{if(!cancelled)toast.error(e instanceof Error?e.message:'MIDI gagal dibaca');});return()=>{cancelled=true;};},[location.key]);
   const [midiSource,setMidiSource]=useState<MidiImport|null>(()=>{try{const data=JSON.parse(localStorage.getItem('sponmusic-midi-source')||'null');if(data&&Array.isArray(data.tracks)&&data.tracks.every((t:any)=>typeof t.id==='number'&&typeof t.name==='string'&&Array.isArray(t.notes)&&validProject({name:data.name,bpm:data.bpm,notes:t.notes})))return data;}catch{}return null;});
   useEffect(()=>{try{localStorage.setItem('sponmusic-midi-source',JSON.stringify(midiSource));}catch{toast.error('Sumber MIDI tidak dapat disimpan: penyimpanan penuh.');}},[midiSource]);
-  const [mode, setMode] = useState<'studio'|'visualizer'>('studio');
+  const [mode, setMode] = useState<'studio'|'visualizer'>(entryMode==='flow'?'visualizer':'studio');
   const [recording, setRecording] = useState(false);
-  const [project, setProject] = useState<Project>(initial);
+  const [project, setProject] = useState<Project>(()=>{if(entryMode!=='create')return initial();const previous=initial();try{const saved=JSON.parse(localStorage.getItem('sponmusic-projects')||'[]');if(Array.isArray(saved)&&previous.notes.length)localStorage.setItem('sponmusic-projects',JSON.stringify([{...previous,name:`${previous.name} (backup)`},...saved].slice(0,30)));}catch{}return {name:'Untitled melody',bpm:120,notes:[],transpose:0};});
   const currentNoteIds = new Set(project.notes.map(n=>n.id));
   const selectedTrackIds = midiSource?.tracks.filter(t=>t.notes.some(n=>currentNoteIds.has(n.id))).map(t=>t.id) ?? [];
   const canReselect = !!midiSource && selectedTrackIds.length > 0;
