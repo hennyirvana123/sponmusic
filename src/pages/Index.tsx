@@ -7,10 +7,12 @@ import Piano from '@/components/Piano';
 import PianoRoll from '@/components/PianoRoll';
 import Visualizer from '@/components/Visualizer';
 import { demo, Project, sound, silence, setVolume, validProject, projectSteps } from '@/lib/music';
-import { importMidi } from '@/lib/import-midi';
+import { readMidi, MidiImport } from '@/lib/import-midi';
+import MidiTrackPicker from '@/components/MidiTrackPicker';
 
 function initial(): Project { try { const p = JSON.parse(localStorage.getItem('sponmusic-current') || 'null'); if (validProject(p)) return p; } catch {} return demo; }
 export default function Index() {
+  const [midiImport,setMidiImport]=useState<MidiImport|null>(null);
   const [mode, setMode] = useState<'studio'|'visualizer'>('studio');
   const [recording, setRecording] = useState(false);
   const [project, setProject] = useState<Project>(initial);
@@ -45,8 +47,9 @@ export default function Index() {
   const stop=()=>{setPlaying(false);setStep(0);silence();};
   const save=()=>{const next=[project,...saved.filter(p=>p.name!==project.name)].slice(0,30);try{localStorage.setItem('sponmusic-projects',JSON.stringify(next));setSaved(next);toast.success('Proyek tersimpan di browser');}catch{toast.error('Penyimpanan browser penuh atau tidak tersedia');}};
   const exportProject=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(project,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`${project.name || 'SPONMUSIC'}.sponmusic.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast.success('File proyek diekspor');};
-  const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error('File maksimal 2 MB.');const midi=/\.(mid|midi)$/i.test(f.name);const p=midi?await importMidi(f):JSON.parse(await f.text());if(!validProject(p))throw Error('File proyek tidak valid.');stop();setProject(p);setLoop(false);toast.success(midi?'MIDI diimpor. Semua track dimainkan dengan suara piano.':'Proyek berhasil diimpor');}catch(e){toast.error(e instanceof Error?e.message:'Impor gagal. Gunakan MIDI atau JSON SPONMUSIC.');}if(file.current)file.current.value='';};
+  const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error('File maksimal 2 MB.');if(/\.(mid|midi)$/i.test(f.name)){const data=await readMidi(f);stop();setMidiImport(data);}else{const p=JSON.parse(await f.text());if(!validProject(p))throw Error('File proyek tidak valid.');stop();setProject(p);setLoop(false);toast.success('Proyek berhasil diimpor');}}catch(e){toast.error(e instanceof Error?e.message:'Impor gagal. Gunakan MIDI atau JSON SPONMUSIC.');}if(file.current)file.current.value='';};
   return <div className={`studio-shell ${mode==='visualizer'?'visualizer-mode':''}`}>
+    {midiImport&&<MidiTrackPicker data={midiImport} onClose={()=>setMidiImport(null)} onImport={p=>{stop();setProject(p);setLoop(false);setMidiImport(null);toast.success('Track terpilih diimpor, turun 1 oktaf.');}}/>}
     <aside className="sidebar">
       <a href="/" className="brand"><span className="brand-icon"><AudioLines size={25}/></span><span>SPON<span className="brand-light">MUSIC</span><small>YOUR IDEAS. YOUR SOUND.</small></span></a>
       <div className="workspace-label">WORKSPACE</div>
