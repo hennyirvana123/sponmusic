@@ -1,5 +1,6 @@
 import { getInstrument } from './instruments';
-import { guitarVoice } from './guitar';
+import { guitarVoice, loadGuitar } from './guitar';
+export async function prepareGuitar() { initAudio(); await loadGuitar(ctx!, master!); }
 export type Note = { id: string; pitch: number; step: number; length: number };
 export type Project = { name: string; bpm: number; notes: Note[] };
 export const isBlack = (pitch: number) => [1, 3, 6, 8, 10].includes(pitch % 12);
@@ -46,7 +47,7 @@ export function sound(pitch: number, volume = .65, duration?: number) {
   envelope.gain.linearRampToValueAtTime(guitar ? .5 : .2, now + instrument.attack);
   if (!guitar) envelope.gain.exponentialRampToValueAtTime(instrument.sustain, now + instrument.attack + instrument.decay);
   const normalization = instrument.harmonics.reduce((sum, value) => sum + value, 0);
-  const oscillators = guitar ? [guitarVoice(ctx!, pitch, envelope)] : instrument.harmonics.map((amplitude, index) => {
+  const oscillators = guitar ? [guitarVoice(ctx!, pitch)] : instrument.harmonics.map((amplitude, index) => {
     const osc = ctx!.createOscillator();
     const gain = ctx!.createGain();
     osc.type = 'sine'; osc.frequency.value = 440 * 2 ** ((pitch - 69) / 12) * (index + 1);
