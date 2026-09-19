@@ -49,7 +49,7 @@ export default function Index() {
   const exportProject=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(project,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`${project.name || 'SPONMUSIC'}.sponmusic.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast.success('File proyek diekspor');};
   const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error('File maksimal 2 MB.');if(/\.(mid|midi)$/i.test(f.name)){const data=await readMidi(f);stop();setMidiImport(data);}else{const p=JSON.parse(await f.text());if(!validProject(p))throw Error('File proyek tidak valid.');stop();setProject(p);setLoop(false);toast.success('Proyek berhasil diimpor');}}catch(e){toast.error(e instanceof Error?e.message:'Impor gagal. Gunakan MIDI atau JSON SPONMUSIC.');}if(file.current)file.current.value='';};
   return <div className={`studio-shell ${mode==='visualizer'?'visualizer-mode':''}`}>
-    {midiImport&&<MidiTrackPicker data={midiImport} onClose={()=>setMidiImport(null)} onImport={p=>{stop();setProject(p);setLoop(false);setMidiImport(null);toast.success('Track terpilih diimpor, turun 1 oktaf.');}}/>}
+    {midiImport&&<MidiTrackPicker data={midiImport} onClose={()=>setMidiImport(null)} onImport={p=>{stop();setProject(p);setLoop(false);setMidiImport(null);toast.success('Track terpilih diimpor, naik 1 oktaf.');}}/>}
     <aside className="sidebar">
       <a href="/" className="brand"><span className="brand-icon"><AudioLines size={25}/></span><span>SPON<span className="brand-light">MUSIC</span><small>YOUR IDEAS. YOUR SOUND.</small></span></a>
       <div className="workspace-label">WORKSPACE</div>
