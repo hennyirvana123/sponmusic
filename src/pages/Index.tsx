@@ -12,11 +12,14 @@ import { readMidi, MidiImport } from '@/lib/import-midi';
 import MidiTrackPicker from '@/components/MidiTrackPicker';
 import StudioExtras from '@/components/StudioExtras';
 import { useLocation } from 'react-router-dom';
+import FlowControls from '@/components/FlowControls';
+import '@/components/workspace-modes.css';
 
 function initial(): Project { try { const p = JSON.parse(localStorage.getItem('sponmusic-current') || 'null'); if (validProject(p)) return p; } catch {} return demo; }
 export default function Index() {
   const location=useLocation();
   const entryMode=new URLSearchParams(location.search).get('mode');
+  const workspace=entryMode==='flow'?'flow':entryMode==='create'?'create':'midi';
   const [midiImport,setMidiImport]=useState<MidiImport|null>(null);
   useEffect(()=>{const file=location.state?.midiFile;if(!(file instanceof File))return;let cancelled=false;readMidi(file).then(data=>{if(!cancelled)setMidiImport(data);}).catch(e=>{if(!cancelled)toast.error(e instanceof Error?e.message:'MIDI gagal dibaca');});return()=>{cancelled=true;};},[location.key]);
   const [midiSource,setMidiSource]=useState<MidiImport|null>(()=>{try{const data=JSON.parse(localStorage.getItem('sponmusic-midi-source')||'null');if(data&&Array.isArray(data.tracks)&&data.tracks.every((t:any)=>typeof t.id==='number'&&typeof t.name==='string'&&Array.isArray(t.notes)&&validProject({name:data.name,bpm:data.bpm,notes:t.notes})))return data;}catch{}return null;});
@@ -26,7 +29,7 @@ export default function Index() {
   const [project, setProject] = useState<Project>(()=>{if(entryMode!=='create')return initial();const previous=initial();try{const saved=JSON.parse(localStorage.getItem('sponmusic-projects')||'[]');if(Array.isArray(saved)&&previous.notes.length)localStorage.setItem('sponmusic-projects',JSON.stringify([{...previous,name:`${previous.name} (backup)`},...saved].slice(0,30)));}catch{}return {name:'Untitled melody',bpm:120,notes:[],transpose:0};});
   const currentNoteIds = new Set(project.notes.map(n=>n.id));
   const selectedTrackIds = midiSource?.tracks.filter(t=>t.notes.some(n=>currentNoteIds.has(n.id))).map(t=>t.id) ?? [];
-  const canReselect = !!midiSource && selectedTrackIds.length > 0;
+  const canReselect = workspace==='midi' && !!midiSource && selectedTrackIds.length > 0;
   const [playing,setPlaying] = useState(false);
   const [step,setStep] = useState(0);
   const [loop,setLoop] = useState(true);
@@ -61,8 +64,8 @@ export default function Index() {
   const save=()=>{const next=[project,...saved.filter(p=>p.name!==project.name)].slice(0,30);try{localStorage.setItem('sponmusic-projects',JSON.stringify(next));setSaved(next);toast.success('Proyek tersimpan di browser');}catch{toast.error('Penyimpanan browser penuh atau tidak tersedia');}};
   const exportProject=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(project,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`${project.name || 'SPONMUSIC'}.sponmusic.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast.success('File proyek diekspor');};
   const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error('File maksimal 2 MB.');if(/\.(mid|midi)$/i.test(f.name)){const data=await readMidi(f);stop();setMidiImport(data);}else{const p=JSON.parse(await f.text());if(!validProject(p))throw Error('File proyek tidak valid.');stop();setProject(p);setLoop(false);toast.success('Proyek berhasil diimpor');}}catch(e){toast.error(e instanceof Error?e.message:'Impor gagal. Gunakan MIDI atau JSON SPONMUSIC.');}if(file.current)file.current.value='';};
-  return <div className={`studio-shell ${mode==='visualizer'?'visualizer-mode':''}`}>
-    {midiImport&&<MidiTrackPicker data={midiImport} initialIds={midiImport===midiSource?selectedTrackIds:undefined} onClose={()=>setMidiImport(null)} onImport={p=>{stop();setProject(midiImport===midiSource?{...p,name:project.name,bpm:project.bpm}:p);setMidiSource(midiImport);setLoop(false);setMidiImport(null);toast.success('Pilihan track diterapkan.');}}/>}
+  return <div className={`studio-shell workspace-${workspace} ${mode==='visualizer'?'visualizer-mode':''}`}>
+    {workspace==='midi'&&midiImport&&<MidiTrackPicker data={midiImport} initialIds={midiImport===midiSource?selectedTrackIds:undefined} onClose={()=>setMidiImport(null)} onImport={p=>{stop();setProject(midiImport===midiSource?{...p,name:project.name,bpm:project.bpm}:p);setMidiSource(midiImport);setLoop(false);setMidiImport(null);toast.success('Pilihan track diterapkan.');}}/>}
     <aside className="sidebar">
       <a href="/" className="brand"><span className="brand-icon"><AudioLines size={25}/></span><span>SPON<span className="brand-light">MUSIC</span><small>YOUR IDEAS. YOUR SOUND.</small></span></a>
       <div className="workspace-label">WORKSPACE</div>
@@ -92,7 +95,7 @@ export default function Index() {
           {recording&&<span className="text-xs text-rose-300">Hentikan rekaman sebelum pindah mode.</span>}
         </div>
         {mode==='visualizer'&&<Visualizer onRecordingChange={setRecording}/>}
-        <StudioExtras project={project} onProject={setProject} step={step} onStop={stop} onSeek={s=>{cursor.current=s;setStep(s);setSeekVersion(v=>v+1);}}/>
+        {workspace==='flow'?<FlowControls/>:<StudioExtras project={project} onProject={setProject} step={step} onStop={stop} onSeek={s=>{cursor.current=s;setStep(s);setSeekVersion(v=>v+1);}}/>}
         <Piano volume={volume}/>
         <div className="bottom-note"><span><Headphones size={15}/> Pakai headphone untuk pengalaman terbaik.</span><span>Dibuat untuk ide yang belum terdengar. <span className="text-violet-400">SPONMUSIC</span></span></div>
         <p className="mt-3 text-xs text-purple-300">Impor .mid / .midi atau JSON · {projectSteps(project.notes)/16} bar · Semua track MIDI digabung sebagai piano. Posisi not mempertahankan timing MIDI; tampilan grid memakai 4/4.</p>

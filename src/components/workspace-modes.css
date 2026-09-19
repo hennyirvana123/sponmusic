@@ -1,0 +1,13 @@
+.workspace-create .welcome .soft-button,
+.workspace-flow .welcome > .flex,
+.workspace-create .track-picker-button,
+.workspace-flow .track-picker-button,
+.workspace-flow .editor-panel,
+.workspace-flow [aria-label="Mode studio"],
+.workspace-flow .project-panel,
+.workspace-flow .creative-card,
+.workspace-flow .nav-item:nth-of-type(2),
+.workspace-flow main > p:last-child,
+.workspace-create main > p:last-child {
+ display:none;
+}
