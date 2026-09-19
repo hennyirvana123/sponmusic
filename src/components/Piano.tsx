@@ -31,6 +31,6 @@ export default function Piano({ volume }: { volume: number }) {
         </button>;
       })}
     </div></div>
-    <div className="piano-caption"><span><span className="status-dot"/> Keyboard aktif</span><span className="hidden md:inline">Putih <b>ZXCVBNMQWERTYUIOP</b><i/> Hitam <b>ASDFGH567890</b></span><Music2 size={14}/></div>
+    <div className="piano-caption"><span><span className="status-dot"/> Keyboard aktif</span><span className="hidden md:inline">Putih <b>ZXCVBNMQWERTYUIOP</b><i/> Hitam <b>ASDFGHJ567890</b></span><Music2 size={14}/></div>
   </section>;
 }
