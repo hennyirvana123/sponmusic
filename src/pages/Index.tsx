@@ -54,7 +54,6 @@ export default function Index() {
   const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error('File maksimal 2 MB.');if(/\.(mid|midi)$/i.test(f.name)){const data=await readMidi(f);stop();setMidiImport(data);}else{const p=JSON.parse(await f.text());if(!validProject(p))throw Error('File proyek tidak valid.');stop();setProject(p);setLoop(false);toast.success('Proyek berhasil diimpor');}}catch(e){toast.error(e instanceof Error?e.message:'Impor gagal. Gunakan MIDI atau JSON SPONMUSIC.');}if(file.current)file.current.value='';};
   return <div className={`studio-shell ${mode==='visualizer'?'visualizer-mode':''}`}>
     {midiImport&&<MidiTrackPicker data={midiImport} initialIds={midiImport===midiSource?selectedTrackIds:undefined} onClose={()=>setMidiImport(null)} onImport={p=>{stop();setProject(midiImport===midiSource?{...p,name:project.name,bpm:project.bpm}:p);setMidiSource(midiImport);setLoop(false);setMidiImport(null);toast.success('Pilihan track diterapkan.');}}/>}
-    {canReselect&&<div className="fixed bottom-5 right-5 z-40 rounded-xl border border-purple-700 bg-purple-950 p-3 shadow-xl"><Button className="primary-button" disabled={recording} onClick={()=>{stop();setMidiImport(midiSource);}}><SlidersHorizontal size={16}/> Pilih ulang track MIDI</Button><p className="mt-2 max-w-64 text-xs text-purple-200">Mengganti pilihan memuat ulang not dari sumber MIDI, menggantikan edit piano roll. Tersedia selama sesi ini.</p></div>}
     <aside className="sidebar">
       <a href="/" className="brand"><span className="brand-icon"><AudioLines size={25}/></span><span>SPON<span className="brand-light">MUSIC</span><small>YOUR IDEAS. YOUR SOUND.</small></span></a>
       <div className="workspace-label">WORKSPACE</div>
@@ -80,6 +79,7 @@ export default function Index() {
         <div className="mt-5 flex flex-wrap items-center gap-2" role="group" aria-label="Mode studio">
           <Button variant="outline" className={mode==='studio'?'primary-button':'soft-button'} disabled={recording} onClick={()=>setMode('studio')}>Studio · Piano roll</Button>
           <Button variant="outline" className={mode==='visualizer'?'primary-button':'soft-button'} onClick={()=>setMode('visualizer')}>Visualizer · Not turun</Button>
+          {canReselect&&<Button variant="outline" className="soft-button sm:ml-auto" disabled={recording} title="Pilih ulang track MIDI. Mengganti pilihan memuat ulang not sumber dan menggantikan edit piano roll. Tersedia selama sesi ini." onClick={()=>{stop();setMidiImport(midiSource);}}><SlidersHorizontal size={14}/> Track MIDI <span className="rounded bg-violet-500/20 px-1.5 text-violet-200">{selectedTrackIds.length}</span></Button>}
           {recording&&<span className="text-xs text-rose-300">Hentikan rekaman sebelum pindah mode.</span>}
         </div>
         {mode==='visualizer'&&<Visualizer onRecordingChange={setRecording}/>}
