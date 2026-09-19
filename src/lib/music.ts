@@ -2,7 +2,7 @@ export type Note = { id: string; pitch: number; step: number; length: number };
 export type Project = { name: string; bpm: number; notes: Note[] };
 export const isBlack = (pitch: number) => [1, 3, 6, 8, 10].includes(pitch % 12);
 export const noteName = (pitch: number) => ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][pitch % 12] + (Math.floor(pitch / 12) - 1);
-export const pitches = Array.from({ length: 45 }, (_, i) => 36 + i);
+export const pitches = Array.from({ length: 45 }, (_, i) => 60 + i);
 const whites = pitches.filter(p => !isBlack(p));
 const blacks = pitches.filter(isBlack);
 export const keyMap: Record<string, number> = {};
