@@ -8,6 +8,7 @@ const blacks = pitches.filter(isBlack);
 export const keyMap: Record<string, number> = {};
 [...'ZXCVBNMQWERTYUIOP'].forEach((k, i) => keyMap[k.toLowerCase()] = whites[i]);
 [...'DFG1234567890'].forEach((k, i) => keyMap[k.toLowerCase()] = blacks[i]);
+keyMap[','] = keyMap.q;
 let ctx: AudioContext | undefined;
 let master: GainNode | undefined;
 export type VisualNoteEvent = { id: string; pitch: number; on: boolean };
