@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { isBlack, keyMap, noteName, pitches, sound } from '@/lib/music';
 import { Keyboard, Music2 } from 'lucide-react';
 import InstrumentPicker from './InstrumentPicker';
+import { keyboardOctave, liveNote } from '@/lib/live';
 
 export default function Piano({ volume }: { volume: number }) {
   const [active, setActive] = useState<number[]>([]);
   const held = useRef(new Map<number, () => void>());
-  const start = (pitch: number) => { if (held.current.has(pitch)) return; held.current.set(pitch, sound(pitch, volume)); setActive([...held.current.keys()]); };
+  const start = (pitch: number) => { if (held.current.has(pitch)) return; const actual=pitch+keyboardOctave*12;const release=sound(actual,volume);liveNote(actual,true);held.current.set(pitch,()=>{release();liveNote(actual,false);}); setActive([...held.current.keys()]); };
   const stop = (pitch: number) => { held.current.get(pitch)?.(); held.current.delete(pitch); setActive([...held.current.keys()]); };
   useEffect(() => {
     const down = (e: KeyboardEvent) => {

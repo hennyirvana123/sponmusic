@@ -10,11 +10,13 @@ import TempoInput from '@/components/TempoInput';
 import { demo, Project, sound, silence, setVolume, validProject, projectSteps } from '@/lib/music';
 import { readMidi, MidiImport } from '@/lib/import-midi';
 import MidiTrackPicker from '@/components/MidiTrackPicker';
+import StudioExtras from '@/components/StudioExtras';
 
 function initial(): Project { try { const p = JSON.parse(localStorage.getItem('sponmusic-current') || 'null'); if (validProject(p)) return p; } catch {} return demo; }
 export default function Index() {
   const [midiImport,setMidiImport]=useState<MidiImport|null>(null);
-  const [midiSource,setMidiSource]=useState<MidiImport|null>(null);
+  const [midiSource,setMidiSource]=useState<MidiImport|null>(()=>{try{const data=JSON.parse(localStorage.getItem('sponmusic-midi-source')||'null');if(data&&Array.isArray(data.tracks)&&data.tracks.every((t:any)=>typeof t.id==='number'&&typeof t.name==='string'&&Array.isArray(t.notes)&&validProject({name:data.name,bpm:data.bpm,notes:t.notes})))return data;}catch{}return null;});
+  useEffect(()=>{try{localStorage.setItem('sponmusic-midi-source',JSON.stringify(midiSource));}catch{toast.error('Sumber MIDI tidak dapat disimpan: penyimpanan penuh.');}},[midiSource]);
   const [mode, setMode] = useState<'studio'|'visualizer'>('studio');
   const [recording, setRecording] = useState(false);
   const [project, setProject] = useState<Project>(initial);
@@ -34,22 +36,24 @@ export default function Index() {
   const current = useRef({project,loop,volume}); current.current={project,loop,volume};
   useEffect(() => {try {localStorage.setItem('sponmusic-current',JSON.stringify(project));setStored(true);} catch {setStored(false);} },[project]);
   useEffect(() => { setVolume(volume); }, [volume]);
+  const cursor=useRef(0);
+  const [seekVersion,setSeekVersion]=useState(0);
   useEffect(() => {
     if (!playing) return;
-    let position=0; let last=performance.now(); let timer: ReturnType<typeof setTimeout>; let cancelled=false;
+    let position=cursor.current; let last=performance.now(); let timer: ReturnType<typeof setTimeout>; let cancelled=false;
     let triggered=new Set<string>();
     const tick=() => {
       if(cancelled) return;
       const {project:p,loop:l,volume:v}=current.current;
       const now=performance.now();position+=(now-last)/1000*p.bpm/15;last=now;
       if(position>=projectSteps(p.notes)) { if(l) {position=0;triggered=new Set();silence();} else {setPlaying(false);setStep(0);return;} }
-      setStep(Math.floor(position));
+      cursor.current=position;setStep(Math.floor(position));
       p.notes.filter(n=>n.step<=position&&!triggered.has(n.id)).forEach(n=>{triggered.add(n.id);const remaining=n.step+n.length-position;if(remaining>0)sound(n.pitch,v,remaining*15/p.bpm);});
       timer=setTimeout(tick,10);
     };
     tick(); return ()=> {cancelled=true;clearTimeout(timer);silence();};
-  },[playing]);
-  const stop=()=>{setPlaying(false);setStep(0);silence();};
+  },[playing,seekVersion]);
+  const stop=()=>{cursor.current=0;setPlaying(false);setStep(0);silence();};
   const save=()=>{const next=[project,...saved.filter(p=>p.name!==project.name)].slice(0,30);try{localStorage.setItem('sponmusic-projects',JSON.stringify(next));setSaved(next);toast.success('Proyek tersimpan di browser');}catch{toast.error('Penyimpanan browser penuh atau tidak tersedia');}};
   const exportProject=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(project,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`${project.name || 'SPONMUSIC'}.sponmusic.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast.success('File proyek diekspor');};
   const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error('File maksimal 2 MB.');if(/\.(mid|midi)$/i.test(f.name)){const data=await readMidi(f);stop();setMidiImport(data);}else{const p=JSON.parse(await f.text());if(!validProject(p))throw Error('File proyek tidak valid.');stop();setProject(p);setLoop(false);toast.success('Proyek berhasil diimpor');}}catch(e){toast.error(e instanceof Error?e.message:'Impor gagal. Gunakan MIDI atau JSON SPONMUSIC.');}if(file.current)file.current.value='';};
@@ -84,6 +88,7 @@ export default function Index() {
           {recording&&<span className="text-xs text-rose-300">Hentikan rekaman sebelum pindah mode.</span>}
         </div>
         {mode==='visualizer'&&<Visualizer onRecordingChange={setRecording}/>}
+        <StudioExtras project={project} onProject={setProject} step={step} onStop={stop} onSeek={s=>{cursor.current=s;setStep(s);setSeekVersion(v=>v+1);}}/>
         <Piano volume={volume}/>
         <div className="bottom-note"><span><Headphones size={15}/> Pakai headphone untuk pengalaman terbaik.</span><span>Dibuat untuk ide yang belum terdengar. <span className="text-violet-400">SPONMUSIC</span></span></div>
         <p className="mt-3 text-xs text-purple-300">Impor .mid / .midi atau JSON · {projectSteps(project.notes)/16} bar · Semua track MIDI digabung sebagai piano. Posisi not mempertahankan timing MIDI; tampilan grid memakai 4/4.</p>
