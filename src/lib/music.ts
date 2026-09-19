@@ -10,16 +10,33 @@ export const keyMap: Record<string, number> = {};
 [...'DFG1234567890'].forEach((k, i) => keyMap[k.toLowerCase()] = blacks[i]);
 let ctx: AudioContext | undefined;
 let master: GainNode | undefined;
-const voices = new Set<() => void>();
-export function setVolume(value: number) { if (master) master.gain.value = value; }
-export function sound(pitch: number, volume = .65, duration?: number) {
+export type VisualNoteEvent = { id: string; pitch: number; on: boolean };
+const listeners = new Set<(event: VisualNoteEvent) => void>();
+export function subscribeNotes(listener: (event: VisualNoteEvent) => void) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+function initAudio() {
   ctx ??= new AudioContext();
   if (ctx.state === 'suspended') void ctx.resume();
   if (!master) { master = ctx.createGain(); master.connect(ctx.destination); }
-  master.gain.value = volume;
-  const now = ctx.currentTime;
-  const envelope = ctx.createGain();
-  envelope.connect(master);
+}
+export function recordingAudio() {
+  initAudio();
+  const destination = ctx!.createMediaStreamDestination();
+  master!.connect(destination);
+  return { stream: destination.stream, release: () => { master!.disconnect(destination); destination.stream.getTracks().forEach(t => t.stop()); } };
+}
+const voices = new Set<() => void>();
+export function setVolume(value: number) { if (master) master.gain.value = value; }
+export function sound(pitch: number, volume = .65, duration?: number) {
+  initAudio();
+  master!.gain.value = volume;
+  const id = crypto.randomUUID();
+  listeners.forEach(listener => listener({id, pitch, on: true}));
+  const now = ctx!.currentTime;
+  const envelope = ctx!.createGain();
+  envelope.connect(master!);
   envelope.gain.setValueAtTime(0, now);
   envelope.gain.linearRampToValueAtTime(.2, now + .008);
   envelope.gain.exponentialRampToValueAtTime(.045, now + 1.5);
@@ -33,6 +50,7 @@ export function sound(pitch: number, volume = .65, duration?: number) {
   let stopped = false;
   const stop = () => {
     if (stopped) return; stopped = true;
+    listeners.forEach(listener => listener({id, pitch, on: false}));
     const t = ctx!.currentTime;
     envelope.gain.cancelScheduledValues(t);
     envelope.gain.setTargetAtTime(.0001, t, .07);

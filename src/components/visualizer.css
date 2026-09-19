@@ -1,0 +1,8 @@
+.visualizer-mode .editor-panel .roll-toolbar,
+.visualizer-mode .editor-panel .roll-scroll,
+.visualizer-mode .editor-panel .editor-footer {
+  display: none;
+}
+.visualizer-mode .editor-panel .transport {
+  border-bottom: none;
+}

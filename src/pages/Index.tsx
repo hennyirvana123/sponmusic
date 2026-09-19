@@ -5,10 +5,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { toast } from 'sonner';
 import Piano from '@/components/Piano';
 import PianoRoll from '@/components/PianoRoll';
+import Visualizer from '@/components/Visualizer';
 import { demo, Project, sound, silence, setVolume, validProject } from '@/lib/music';
 
 function initial(): Project { try { const p = JSON.parse(localStorage.getItem('sponmusic-current') || 'null'); if (validProject(p)) return p; } catch {} return demo; }
 export default function Index() {
+  const [mode, setMode] = useState<'studio'|'visualizer'>('studio');
+  const [recording, setRecording] = useState(false);
   const [project, setProject] = useState<Project>(initial);
   const [playing,setPlaying] = useState(false);
   const [step,setStep] = useState(0);
@@ -40,7 +43,7 @@ export default function Index() {
   const save=()=>{const next=[project,...saved.filter(p=>p.name!==project.name)].slice(0,30);try{localStorage.setItem('sponmusic-projects',JSON.stringify(next));setSaved(next);toast.success('Proyek tersimpan di browser');}catch{toast.error('Penyimpanan browser penuh atau tidak tersedia');}};
   const exportProject=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(project,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`${project.name || 'SPONMUSIC'}.sponmusic.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast.success('File proyek diekspor');};
   const loadFile=async(f?:File)=>{if(!f)return;try{if(f.size>2000000)throw Error();const p=JSON.parse(await f.text());if(!validProject(p))throw Error();stop();setProject(p);toast.success('Proyek berhasil diimpor');}catch{toast.error('File proyek tidak valid. Gunakan file JSON SPONMUSIC.');}if(file.current)file.current.value='';};
-  return <div className="studio-shell">
+  return <div className={`studio-shell ${mode==='visualizer'?'visualizer-mode':''}`}>
     <aside className="sidebar">
       <a href="/" className="brand"><span className="brand-icon"><AudioLines size={25}/></span><span>SPON<span className="brand-light">MUSIC</span><small>YOUR IDEAS. YOUR SOUND.</small></span></a>
       <div className="workspace-label">WORKSPACE</div>
@@ -63,6 +66,12 @@ export default function Index() {
           <PianoRoll notes={project.notes} step={step} playing={playing} length={length} erase={erase} onChange={notes=>setProject(p=>({...p,notes}))} preview={p=>sound(p,volume,.45)}/>
           <div className="editor-footer"><span><span className="violet-dot"/>{project.notes.length} notes <span className="separator">•</span> C3 – G♯6</span><span>Klik untuk menambah · Klik not untuk menghapus · Seret tepi untuk durasi</span><span>1/16 grid</span></div>
         </section>
+        <div className="mt-5 flex flex-wrap items-center gap-2" role="group" aria-label="Mode studio">
+          <Button variant="outline" className={mode==='studio'?'primary-button':'soft-button'} disabled={recording} onClick={()=>setMode('studio')}>Studio · Piano roll</Button>
+          <Button variant="outline" className={mode==='visualizer'?'primary-button':'soft-button'} onClick={()=>setMode('visualizer')}>Visualizer · Not turun</Button>
+          {recording&&<span className="text-xs text-rose-300">Hentikan rekaman sebelum pindah mode.</span>}
+        </div>
+        {mode==='visualizer'&&<Visualizer onRecordingChange={setRecording}/>}
         <Piano volume={volume}/>
         <div className="bottom-note"><span><Headphones size={15}/> Pakai headphone untuk pengalaman terbaik.</span><span>Dibuat untuk ide yang belum terdengar. <span className="text-violet-400">SPONMUSIC</span></span></div>
       </main>
