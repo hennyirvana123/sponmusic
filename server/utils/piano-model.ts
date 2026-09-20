@@ -1,7 +1,8 @@
+import { pianoArrangement } from './piano-arrangement';
 export class ModelError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
 }
-export function modelUrl(): string { return (process.env.BASIC_PITCH_URL || process.env.NITRO_PIANO_MODEL_URL || '').trim(); }
+export function modelUrl(): string { return (process.env.BASIC_PITCH_URL || '').trim(); }
 function endpoint(): URL {
   try {
     const url = new URL(modelUrl());
