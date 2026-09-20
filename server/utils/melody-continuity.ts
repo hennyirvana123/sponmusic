@@ -1,23 +1,26 @@
+import { filterMelodyCandidates, type Candidate } from './melody-candidates';
 type Note={pitch:number;start:number;end:number;velocity:number;confidence:number};
 const variants=(pitch:number)=>[-12,0,12].map(s=>pitch+s).filter(p=>p>=48&&p<=96);
 const strong=(n:Note)=>n.confidence>=.7&&n.velocity>=.55&&n.end-n.start>=.45;
 const pc=(n:number)=>(n%12+12)%12;
-type Onset={t:number;notes:Note[]};
+type Onset={t:number;notes:Candidate[]};
 function registerAnchor(groups:Onset[],index:number,previous?:number):number{
- const window=groups.slice(index,index+4).filter(g=>g.t-groups[index].t<=3);
- const candidates=window.flatMap(g=>g.notes.filter(n=>n.confidence>=.4&&n.end-n.start>=.2));
- if(!candidates.length)return previous??groups[index].notes[0].pitch;
+ const window=groups.slice(index,index+6).filter(g=>g.t-groups[index].t<=4);
+ const candidates=window.flatMap(g=>g.notes.filter(n=>n.confidence>=.4&&n.end-n.start>=.2&&n.spikePenalty<2));
+ if(!candidates.length)return previous??groups[index].notes[0].registerCenter;
  const pitches=[...new Set(candidates.map(n=>n.pitch))];
- const score=(p:number)=>window.reduce((sum,g)=>sum+Math.min(16,...g.notes.map(n=>Math.abs(n.pitch-p)+(1-n.confidence)*2)),0)+(previous===undefined?0:Math.max(0,Math.abs(p-previous)-7)*.4);
+ const score=(p:number)=>window.reduce((sum,g)=>sum+Math.min(16,...g.notes.map(n=>Math.abs(n.pitch-p)+(1-n.confidence)+n.spikePenalty*3)),0)+(previous===undefined?0:Math.max(0,Math.abs(p-previous)-7)*.4);
  return pitches.sort((a,b)=>score(a)-score(b)||a-b)[0];
 }
 
 export function refineMelody(notes:Note[],scale:number[]):Note[]{
  type Tail={n:Note;prev:Tail|null};
  type Path={score:number;history:Note[];tail:Tail|null;anchor?:number;phraseCount:number;phraseIndex:number};
- const groups=new Map<number,Note[]>();
- for(const n of notes){if(n.pitch<48||n.confidence<.28)continue;const t=Math.round(n.start*8)/8;const list=groups.get(t)||[];list.push(n);groups.set(t,list);}
- const onsets=[...groups].sort((a,b)=>a[0]-b[0]).map(([t,g])=>({t,notes:g.sort((a,b)=>b.confidence-a.confidence).slice(0,5)}));
+ const filtered=filterMelodyCandidates(notes);
+ const groups=new Map<number,Candidate[]>();
+ for(const n of filtered){const t=Math.round(n.start*8)/8;const list=groups.get(t)||[];list.push(n);groups.set(t,list);}
+ const quality=(n:Candidate)=>n.confidence*.6+Math.min(n.end-n.start,2)*.3+n.futureSupport*.15-n.spikePenalty;
+ const onsets=[...groups].sort((a,b)=>a[0]-b[0]).map(([t,g])=>({t,notes:g.sort((a,b)=>quality(b)-quality(a)).slice(0,8)}));
  let beam:Path[]=[{score:0,history:[],tail:null,phraseCount:0,phraseIndex:0}];
  for(let i=0;i<onsets.length;i++){
   const {t,notes:candidates}=onsets[i];
@@ -39,9 +42,9 @@ export function refineMelody(notes:Note[],scale:number[]):Note[]{
      const newPhrase=!last||gap>=1.5;
      const anchor=newPhrase?registerAnchor(onsets,i,path.anchor):path.anchor!;
      const phraseIndex=newPhrase?i:path.phraseIndex;
-     const early=i-phraseIndex<4;
-     const support=future.filter(g=>g.notes.some(f=>strong(f)&&Math.abs(f.pitch-pitch)<=5)).length;
-     const supported=strong(n)&&pitch===n.pitch&&(support>=2||motif>0);
+     const early=i-phraseIndex<6;
+     const support=future.filter(g=>g.notes.some(f=>f.spikePenalty<2&&strong(f)&&Math.abs(f.pitch-pitch)<=5)).length;
+     const supported=n.spikePenalty<2&&pitch===n.pitch&&(n.futureSupport>=2||support>=2||motif>0);
      const jump=connected?(Math.max(0,magnitude-5)*.18+Math.max(0,magnitude-12)*.38)*(supported?.4:1):0;
      const reversal=connected&&before&&Math.sign(last.pitch-before.pitch)!==Math.sign(interval)&&magnitude>5&&Math.abs(last.pitch-before.pitch)>5?(supported?.08:.4):0;
      const local=connected?Math.max(0,Math.abs(pitch-median)-6)*.07:0;
@@ -51,7 +54,8 @@ export function refineMelody(notes:Note[],scale:number[]):Note[]{
      for(let k=0;k<future.length;k++){const w=1/(k+1);const fits=future[k].notes.map(f=>Math.max(...variants(f.pitch).map(p=>f.confidence*.3-Math.max(0,Math.abs(p-pitch)-5)*.04)));if(fits.length){ahead+=Math.max(-.2,...fits)*w;weight+=w;}}
      ahead=weight?ahead/weight:0;
      const length=n.end-n.start;const shiftPenalty=Math.abs(pitch-n.pitch)*.015;
-     const reward=n.confidence*1.65+Math.min(length,2)*.3-.95-(length<.25?.4:0)-jump-reversal-register-shiftPenalty+motif+ahead;
+     const localPenalty=Math.max(0,Math.abs(pitch-n.registerCenter)-5)*.05*(supported?.2:1);
+     const reward=n.confidence*.85+Math.min(length,2)*.4-.6-(length<.25?.4:0)-jump-reversal-register-shiftPenalty-localPenalty-n.spikePenalty*(early?1.2:1)+motif+ahead+Math.min(2,n.futureSupport)*.12;
      const selected={...n,pitch,start:t,end:t+Math.max(.125,Math.round(length*8)/8)};
      next.push({score:path.score+reward,history:[...recent,selected].slice(-10),tail:{n:selected,prev:path.tail},anchor:supported&&!early?anchor+(pitch-anchor)*.25:anchor,phraseCount:newPhrase?1:path.phraseCount+1,phraseIndex});
     }
@@ -61,7 +65,9 @@ export function refineMelody(notes:Note[],scale:number[]):Note[]{
   const seen=new Set<string>();beam=next.sort((a,b)=>b.score-a.score).filter(p=>{const key=p.history.slice(-4).map(n=>`${n.start}:${n.pitch}`).join('|');if(seen.has(key))return false;seen.add(key);return true;}).slice(0,32);
  }
  const result:Note[]=[];for(let tail=beam[0]?.tail;tail;tail=tail.prev)result.push({...tail.n});result.reverse();
- return finishMelody(result,notes,scale);
+ const final=finishMelody(result,filtered.filter(n=>n.spikePenalty<2),scale);
+ if(process.env.NODE_ENV==='development')console.debug('[melody-v2.4]',{inputNotes:notes.length,candidatesBeforeFilter:filtered.length,strongSpikePenalties:filtered.filter(n=>n.spikePenalty>=2).length,finalMelodyNotes:final.length});
+ return final;
 }
 
 export function finishMelody(sequence:Note[],evidence:Note[],scale:number[]):Note[]{
