@@ -1,4 +1,5 @@
 import { Midi } from '@tonejs/midi';
+import { refineMelody } from './melody-continuity';
 export type Note = { pitch:number; start:number; end:number; velocity:number; confidence:number };
 type Key = { root:number; minor:boolean; confidence:number; scale:number[] };
 type Chord = { root:number; pcs:number[]; score:number };
@@ -22,16 +23,7 @@ export function detectKey(notes:Note[]):Key{
  scores.sort((a,b)=>b.score-a.score);const best=scores[0];const confidence=Math.max(0,(best.score-scores[1].score)/(Math.abs(best.score)||1));return {...best,confidence,scale:(best.minor?[0,2,3,5,7,8,10]:[0,2,4,5,7,9,11]).map(n=>pc(n+best.root))};
 }
 export function extractMelody(notes:Note[]):Note[]{
- // Onset-based beam search with explicit skip/rest; no forced per-grid note selection.
- type Path={score:number;last:Note|null;sourcePitch:number;intervals:number[];tail:{n:Note;prev:Path['tail']}|null};
- let beam:Path[]=[{score:0,last:null,sourcePitch:72,intervals:[],tail:null}];
- const groups=new Map<number,Note[]>();for(const n of notes){const start=Math.round(n.start*8)/8;const g=groups.get(start)||[];g.push(n);groups.set(start,g);}
- for(const [start,group] of groups){const candidates=group.filter(n=>n.pitch>=55&&n.confidence>=.32).sort((a,b)=>b.confidence-a.confidence).slice(0,5);const next:Path[]=[];
- for(const path of beam){next.push(path);for(const n of candidates){if(path.last&&start<path.last.start+.22)continue;for(const shift of [-12,0,12]){const pitch=n.pitch+shift;if(pitch<55||pitch>88)continue;const gap=path.last?start-path.last.end:4;const interval=pitch-(path.last?.pitch??pitch);const sourceInterval=n.pitch-path.sourcePitch;const contour=path.last&&gap<2?Math.abs(interval-sourceInterval)*.12:0;const jump=gap>2?0:Math.max(0,Math.abs(interval)-5)*.12;const repeat=path.intervals.includes(interval)?.12:0;const length=n.end-n.start;const reward=n.confidence*2+Math.min(length,2)*.2-1.05-(length<.25?.45:0)-Math.abs(shift)*.035-jump-contour+repeat;
- const selected={...n,pitch,start,end:start+Math.max(.125,Math.round(length*8)/8)};next.push({score:path.score+reward,last:selected,sourcePitch:n.pitch,intervals:[...path.intervals.slice(-5),interval],tail:{n:selected,prev:path.tail}});}}}
- beam=next.sort((a,b)=>b.score-a.score).slice(0,24);
- }
- const out:Note[]=[];for(let tail=beam[0].tail;tail;tail=tail.prev)out.push({...tail.n});out.reverse();for(let i=0;i<out.length-1;i++)out[i].end=Math.min(out[i].end,out[i+1].start);return out.filter(n=>n.end>n.start);
+ return refineMelody(notes,detectKey(notes).scale);
 }
 export function generateChordCandidates(notes:Note[],melody:Note[],key:Key,start:number,end:number):Chord[]{
  const weights=Array(12).fill(0);let sum=0;for(const n of notes){const w=overlap(n,start,end)*n.confidence*n.velocity;weights[pc(n.pitch)]+=w;sum+=w;}if(sum<.12)return [];
