@@ -5,7 +5,7 @@ async function bytes(response:Response,limit:number){if(!response.body)throw Err
 export default defineHandler(async event=>{
  const req=event.req;const path=new URL(req.url).pathname.split('/api/piano/jobs/')[1]||'';
  if(!/^(submit|[a-f0-9]{32}(\/download)?)$/.test(path))return error(400,'Job tidak valid');
- const origin=req.headers.get('origin');if(origin&&origin!==new URL(req.url).origin)return error(403,'Origin tidak diizinkan');
+ const origin=req.headers.get('origin');if(origin&&origin!=='https://spontion.blitz.cloud'&&origin!==new URL(req.url).origin)return error(403,'Origin tidak diizinkan');
  if(!modelUrl())return error(503,'Model belum dikonfigurasi');
  let base:URL;try{base=new URL(modelUrl());if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash)throw Error();base.pathname=base.pathname.replace(/\/+$/,'').replace(/\/transcribe$/,'')+'/transcribe';}catch{return error(503,'Konfigurasi URL Basic Pitch tidak valid');}
  const submit=path==='submit';if(req.method!==(submit?'POST':'GET'))return error(405,'Metode tidak diizinkan');
