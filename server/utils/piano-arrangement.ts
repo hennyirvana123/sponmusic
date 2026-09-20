@@ -1,6 +1,6 @@
 import pkg from '@tonejs/midi';
 import { refineMelody } from './melody-continuity';
-import { optimizeChordProgression, generateAccompaniment, controlDensity } from './piano-harmony';
+import { optimizeChordProgression, controlDensity } from './piano-harmony';
 const { Midi } = pkg;
 export { generateChordCandidates, optimizeChordProgression, createVoicing, generateAccompaniment } from './piano-harmony';
 export type Note = { pitch:number; start:number; end:number; velocity:number; confidence:number };
@@ -23,7 +23,59 @@ export function detectKey(notes:Note[]):Key{
  scores.sort((a,b)=>b.score-a.score);const best=scores[0];const confidence=Math.max(0,(best.score-scores[1].score)/(Math.abs(best.score)||1));return {...best,confidence,scale:(best.minor?[0,2,3,5,7,8,10]:[0,2,4,5,7,9,11]).map(n=>pc(n+best.root))};
 }
 export function extractMelody(notes:Note[]):Note[]{
- return refineMelody(notes,detectKey(notes).scale);
+ const selected=refineMelody(notes,detectKey(notes).scale);
+ // Recover source articulation after path selection: do not turn repeated attacks
+ // into sustained notes or impose a new rhythmic grid on the song's lead voice.
+ const lead:Note[]=[];
+ const used=new Set<Note>();
+ for(const n of selected){
+  const source=notes.filter(x=>x.pitch===n.pitch&&!used.has(x)&&Math.abs(x.start-n.start)<=.14)
+   .sort((a,b)=>Math.abs(a.start-n.start)-Math.abs(b.start-n.start))[0];
+  if(source){used.add(source);lead.push({...source});}
+ }
+ lead.sort((a,b)=>a.start-b.start);
+ for(let i=0;i<lead.length-1;i++)lead[i].end=Math.min(lead[i].end,lead[i+1].start);
+ return lead.filter(n=>n.end>n.start);
+}
+
+function balladAccompaniment(bars:ReturnType<typeof optimizeChordProgression>,melody:Note[],bpm:number):Note[]{
+ const output:Note[]=[];let previous:number[]=[];
+ for(const bar of bars){
+  if(!bar.chord)continue;
+  const lead=melody.filter(n=>overlap(n,bar.start,bar.end)>0);if(!lead.length)continue;
+  // Weakly supported harmony stays silent instead of filling space with a guess.
+  if(bar.chord.score<.25)continue;
+  const first=Math.max(bar.start,lead[0].start),end=Math.min(bar.end,lead[lead.length-1].end);
+  if(end-first<.5)continue;
+  const floor=Math.min(...lead.map(n=>n.pitch));
+  const options:number[][]=[];
+  for(let low=40;low<=59;low++){
+   if(!bar.chord.pcs.includes(pc(low)))continue;
+   const pitches:number[]=[];
+   for(let p=low;p<=low+12;p++)if(bar.chord.pcs.includes(pc(p))&&p<floor-3&&!pitches.some(x=>pc(x)===pc(p)))pitches.push(p);
+   if(pitches.length>=2)options.push(pitches);
+  }
+  const cost=(v:number[])=>v.reduce((sum,p,i)=>sum+Math.abs(p-(previous[i]??[48,52,55][i]))-(previous.includes(p)?1.5:0),0)+(3-v.length)*3;
+  options.sort((a,b)=>cost(a)-cost(b));const voice=options[0];if(!voice)continue;previous=voice;
+  const put=(pitch:number,start:number,stop:number,velocity:number)=>{if(stop-start>=.12)output.push({pitch,start,end:stop,velocity,confidence:1});};
+  const next=melody.find(n=>n.start>=end);const ending=!next||next.start-end>=.75;
+  const dense=lead.length>=5||bpm>135;
+  if(dense||ending){
+   // A quiet held dyad supports a busy lead or resolves a phrase.
+   for(const p of voice.slice(0,2))put(p,first,end,.27);
+  }else{
+   // Sparse two-pulse ballad figure, with room between attacks.
+   put(voice[0],first,Math.min(end,first+1.5),.32);
+   if(first+2<end)for(const p of voice.slice(1))put(p,first+2,end,.29);
+  }
+  // Optional right-hand harmony only beneath a long, consonant melody tone.
+  for(const m of lead){
+   if(m.end-m.start<2||!bar.chord.pcs.includes(pc(m.pitch)))continue;
+   const tone=[m.pitch-3,m.pitch-4,m.pitch-5,m.pitch-7].find(p=>p>voice[voice.length-1]+2&&bar.chord!.pcs.includes(pc(p)));
+   if(tone!==undefined){put(tone,Math.max(first,m.start),Math.min(end,m.end),.24);break;}
+  }
+ }
+ return output;
 }
 export function validateArrangement(melody:Note[],chords:Note[]):Note[][]{
  const sparse=controlDensity(melody,chords);
@@ -41,6 +93,6 @@ export function pianoArrangement(bytes:Uint8Array,estimatedBpm?:number):Uint8Arr
  const beat=60/bpm;const input=source.tracks.flatMap(t=>t.notes.map(n=>({pitch:n.midi,start:n.time/beat,end:(n.time+n.duration)/beat,velocity:n.velocity,confidence:0})));
  if(!input.length||input.length>30000||input.some(n=>!Number.isFinite(n.start)||!Number.isFinite(n.end)||n.start<0||n.end<=n.start||n.end>1024||!Number.isFinite(n.velocity)||!Number.isInteger(n.pitch)||n.pitch<0||n.pitch>127))throw Error('Invalid or oversized transcription');
  const cleaned=cleanNotes(input);if(!cleaned.length)throw Error('No reliable notes after cleanup');const key=detectKey(cleaned);const melody=extractMelody(cleaned);if(!melody.length)throw Error('No reliable melody; arrangement not generated');
- const total=Math.max(...cleaned.map(n=>n.end));const bars=optimizeChordProgression(cleaned,melody,key,total);const {chords}=generateAccompaniment(bars,melody,bpm);const tracks=validateArrangement(melody,chords);
- const midi=new Midi();midi.header.setTempo(bpm);['Melody · right hand','Chord accompaniment'].forEach((name,i)=>{const track=midi.addTrack();track.name=name;track.instrument.number=0;for(const n of tracks[i])track.addNote({midi:n.pitch,time:n.start*beat,duration:(n.end-n.start)*beat,velocity:Math.max(.1,Math.min(.9,n.velocity))});});return midi.toArray();
+ const total=Math.max(...cleaned.map(n=>n.end));const bars=optimizeChordProgression(cleaned,melody,key,total);const chords=balladAccompaniment(bars,melody,bpm);const tracks=validateArrangement(melody,chords);
+ const midi=new Midi();midi.header.setTempo(bpm);['Melody · right hand','Chord accompaniment'].forEach((name,i)=>{const track=midi.addTrack();track.name=name;track.instrument.number=0;for(const n of tracks[i])track.addNote({midi:n.pitch,time:n.start*beat,duration:(n.end-n.start)*beat,velocity:Math.max(.1,Math.min(.9,i===0?Math.max(.58,n.velocity):n.velocity))});});return midi.toArray();
 }
