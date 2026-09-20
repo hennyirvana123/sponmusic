@@ -1,15 +1,24 @@
 type Note={pitch:number;start:number;end:number;velocity:number;confidence:number};
-const variants=(pitch:number)=>[-12,0,12].map(s=>pitch+s).filter(p=>p>=55&&p<=88);
+const variants=(pitch:number)=>[-12,0,12].map(s=>pitch+s).filter(p=>p>=48&&p<=96);
 const strong=(n:Note)=>n.confidence>=.7&&n.velocity>=.55&&n.end-n.start>=.45;
 const pc=(n:number)=>(n%12+12)%12;
+type Onset={t:number;notes:Note[]};
+function registerAnchor(groups:Onset[],index:number,previous?:number):number{
+ const window=groups.slice(index,index+4).filter(g=>g.t-groups[index].t<=3);
+ const candidates=window.flatMap(g=>g.notes.filter(n=>n.confidence>=.4&&n.end-n.start>=.2));
+ if(!candidates.length)return previous??groups[index].notes[0].pitch;
+ const pitches=[...new Set(candidates.map(n=>n.pitch))];
+ const score=(p:number)=>window.reduce((sum,g)=>sum+Math.min(16,...g.notes.map(n=>Math.abs(n.pitch-p)+(1-n.confidence)*2)),0)+(previous===undefined?0:Math.max(0,Math.abs(p-previous)-7)*.4);
+ return pitches.sort((a,b)=>score(a)-score(b)||a-b)[0];
+}
 
 export function refineMelody(notes:Note[],scale:number[]):Note[]{
  type Tail={n:Note;prev:Tail|null};
- type Path={score:number;history:Note[];tail:Tail|null};
+ type Path={score:number;history:Note[];tail:Tail|null;anchor?:number;phraseCount:number;phraseIndex:number};
  const groups=new Map<number,Note[]>();
- for(const n of notes){if(n.pitch<55||n.confidence<.28)continue;const t=Math.round(n.start*8)/8;const list=groups.get(t)||[];list.push(n);groups.set(t,list);}
+ for(const n of notes){if(n.pitch<48||n.confidence<.28)continue;const t=Math.round(n.start*8)/8;const list=groups.get(t)||[];list.push(n);groups.set(t,list);}
  const onsets=[...groups].sort((a,b)=>a[0]-b[0]).map(([t,g])=>({t,notes:g.sort((a,b)=>b.confidence-a.confidence).slice(0,5)}));
- let beam:Path[]=[{score:0,history:[],tail:null}];
+ let beam:Path[]=[{score:0,history:[],tail:null,phraseCount:0,phraseIndex:0}];
  for(let i=0;i<onsets.length;i++){
   const {t,notes:candidates}=onsets[i];
   const future=onsets.slice(i+1,i+4).filter(g=>g.t-t<=2);
@@ -27,19 +36,24 @@ export function refineMelody(notes:Note[],scale:number[]):Note[]{
      if(last&&before){const rhythm=t-last.start;const priorInterval=last.pitch-before.pitch;
       for(let j=2;j<recent.length;j++){if(recent[j-1].pitch-recent[j-2].pitch===priorInterval&&recent[j].pitch-recent[j-1].pitch===interval&&Math.abs((recent[j].start-recent[j-1].start)-rhythm)<.2){motif=.2;break;}}
      }
-     // Strong original-register evidence or a repeated interval pattern can support leaps.
-     const supported=strong(n)&&pitch===n.pitch;
-     const jump=connected?(Math.max(0,magnitude-5)*.13+Math.max(0,magnitude-12)*.16)*(supported||motif? .4:1):0;
-     const reversal=connected&&before&&Math.sign(last.pitch-before.pitch)!==Math.sign(interval)&&magnitude>5&&Math.abs(last.pitch-before.pitch)>5?(supported?.08:.3):0;
-     const register=connected?Math.max(0,Math.abs(pitch-median)-7)*.045:0;
+     const newPhrase=!last||gap>=1.5;
+     const anchor=newPhrase?registerAnchor(onsets,i,path.anchor):path.anchor!;
+     const phraseIndex=newPhrase?i:path.phraseIndex;
+     const early=i-phraseIndex<4;
+     const support=future.filter(g=>g.notes.some(f=>strong(f)&&Math.abs(f.pitch-pitch)<=5)).length;
+     const supported=strong(n)&&pitch===n.pitch&&(support>=2||motif>0);
+     const jump=connected?(Math.max(0,magnitude-5)*.18+Math.max(0,magnitude-12)*.38)*(supported?.4:1):0;
+     const reversal=connected&&before&&Math.sign(last.pitch-before.pitch)!==Math.sign(interval)&&magnitude>5&&Math.abs(last.pitch-before.pitch)>5?(supported?.08:.4):0;
+     const local=connected?Math.max(0,Math.abs(pitch-median)-6)*.07:0;
+     const register=local+Math.max(0,Math.abs(pitch-anchor)-5)*(early?.2:.11)*(supported?.4:1)+(early&&pitch>anchor+9&&support<2?.55:0);
      // Look ahead to three subsequent onset groups; only observed candidates contribute.
      let ahead=0;let weight=0;
      for(let k=0;k<future.length;k++){const w=1/(k+1);const fits=future[k].notes.map(f=>Math.max(...variants(f.pitch).map(p=>f.confidence*.3-Math.max(0,Math.abs(p-pitch)-5)*.04)));if(fits.length){ahead+=Math.max(-.2,...fits)*w;weight+=w;}}
      ahead=weight?ahead/weight:0;
      const length=n.end-n.start;const shiftPenalty=Math.abs(pitch-n.pitch)*.015;
-     const reward=n.confidence*2+Math.min(length,2)*.2-1.08-(length<.25?.4:0)-jump-reversal-register-shiftPenalty+motif+ahead;
+     const reward=n.confidence*1.65+Math.min(length,2)*.3-.95-(length<.25?.4:0)-jump-reversal-register-shiftPenalty+motif+ahead;
      const selected={...n,pitch,start:t,end:t+Math.max(.125,Math.round(length*8)/8)};
-     next.push({score:path.score+reward,history:[...recent,selected].slice(-10),tail:{n:selected,prev:path.tail}});
+     next.push({score:path.score+reward,history:[...recent,selected].slice(-10),tail:{n:selected,prev:path.tail},anchor:supported&&!early?anchor+(pitch-anchor)*.25:anchor,phraseCount:newPhrase?1:path.phraseCount+1,phraseIndex});
     }
    }
   }

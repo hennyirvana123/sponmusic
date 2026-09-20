@@ -39,35 +39,28 @@ export function createVoicing(chord:Chord,previous:number[],ceiling:number):numb
  if(score<cost){cost=score;best=v;}}
  return best;
 }
-export function generateBass(chord:Chord,start:number,end:number,voicing:number[],active:boolean):Note[]{
- if(!voicing.length)return [];const roots=[36+chord.root,48+chord.root].filter(p=>p<=52&&p<voicing[0]);if(!roots.length)return [];const root=roots[roots.length-1];
- const result=[make(root,start,Math.min(end,start+.85),.43)];
- const fifth=root+7;if(active&&end-start>=6&&fifth<=52&&fifth<voicing[0])result.push(make(fifth,start+4,Math.min(end,start+4.75),.36));return result;
-}
 export function generateAccompaniment(bars:Bar[],melody:Note[],bpm:number){
- const chords:Note[]=[],bass:Note[]=[];let previous:number[]=[];
- for(let i=0;i<bars.length;i++){const bar=bars[i];if(!bar.chord)continue;const previousBar=bars[i-1];const continuing=!!previousBar?.chord&&same(previousBar.chord,bar.chord);
+ const chords:Note[]=[];let previous:number[]=[];
+ for(let i=0;i<bars.length;i++){const bar=bars[i];if(!bar.chord)continue;
  const phrase=melody.filter(n=>overlap(n,bar.start,bar.end)>0);if(!phrase.length)continue;
  const first=phrase[0],last=phrase[phrase.length-1];const before=melody.filter(n=>n.end<=first.start).pop();const after=melody.find(n=>n.start>=last.end);
  const beginning=!before||first.start-before.end>=1;const ending=!after||after.start-last.end>=1;
  const ceiling=Math.min(...phrase.map(n=>n.pitch))-3;const v=createVoicing(bar.chord,previous,ceiling);if(!v.length)continue;previous=v;
  const dense=phrase.length>=5||bpm>=145;
  const pattern=ending||dense||beginning?'sustain':phrase.length<=2&&bpm<=110?'broken':'half';
- // Start after the root attack, so low root + triad need not span two octaves together.
- const start=Math.max(bar.start+(continuing?0:1),first.start);const end=Math.min(bar.end,last.end+.25);if(end-start<.25)continue;
+ const start=Math.max(bar.start,first.start);const end=Math.min(bar.end,last.end+.25);if(end-start<.25)continue;
  if(pattern==='sustain'){for(const p of v)chords.push(make(p,start,end,.28));}
  else if(pattern==='broken'){for(const [j,t] of [start,start+2].entries())if(t<end)chords.push(make(v[j%v.length],t,Math.min(end,t+1.3),.3));}
  else{for(const t of [start,start+2])if(t<end)for(const p of v.slice(0,2))chords.push(make(p,t,Math.min(end,t+1.7),.3));}
- if(!continuing)bass.push(...generateBass(bar.chord,Math.max(bar.start,first.start),end,v,false));
  }
- return {chords,bass};
+ return {chords};
 }
-export function controlDensity(melody:Note[],chords:Note[],bass:Note[]){
- const output:Note[][]=[[],[]];
- for(const [index,notes] of [chords,bass].entries()){const counts=new Map<number,number>();for(const n of [...notes].sort((a,b)=>a.start-b.start||a.pitch-b.pitch)){
- const bar=Math.floor(n.start/4),limit=index===0?4:1;if((counts.get(bar)||0)>=limit)continue;
- if(melody.some(m=>overlap(m,n.start,n.end)>0&&(index===0?n.pitch>=m.pitch-3:n.pitch>=m.pitch-12)))continue;
- if(output[index].some(x=>x.pitch===n.pitch&&overlap(x,n.start,n.end)>0))continue;
- output[index].push(n);counts.set(bar,(counts.get(bar)||0)+1);}}
- return {chords:output[0],bass:output[1]};
+export function controlDensity(melody:Note[],chords:Note[]){
+ const output:Note[]=[];const counts=new Map<number,number>();
+ for(const n of [...chords].sort((a,b)=>a.start-b.start||a.pitch-b.pitch)){
+ const bar=Math.floor(n.start/4);if((counts.get(bar)||0)>=4)continue;
+ if(melody.some(m=>overlap(m,n.start,n.end)>0&&n.pitch>=m.pitch-3))continue;
+ if(output.some(x=>x.pitch===n.pitch&&overlap(x,n.start,n.end)>0))continue;
+ output.push(n);counts.set(bar,(counts.get(bar)||0)+1);}
+ return {chords:output};
 }

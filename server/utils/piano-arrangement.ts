@@ -1,7 +1,7 @@
 import { Midi } from '@tonejs/midi';
 import { refineMelody } from './melody-continuity';
 import { optimizeChordProgression, generateAccompaniment, controlDensity } from './piano-harmony';
-export { generateChordCandidates, optimizeChordProgression, createVoicing, generateBass, generateAccompaniment } from './piano-harmony';
+export { generateChordCandidates, optimizeChordProgression, createVoicing, generateAccompaniment } from './piano-harmony';
 export type Note = { pitch:number; start:number; end:number; velocity:number; confidence:number };
 type Key = { root:number; minor:boolean; confidence:number; scale:number[] };
 const pc=(n:number)=>(n%12+12)%12;
@@ -24,11 +24,11 @@ export function detectKey(notes:Note[]):Key{
 export function extractMelody(notes:Note[]):Note[]{
  return refineMelody(notes,detectKey(notes).scale);
 }
-export function validateArrangement(melody:Note[],chords:Note[],bass:Note[]):Note[][]{
- const sparse=controlDensity(melody,chords,bass);
- const result:Note[][]=[[],[],[]];const accepted:{n:Note;track:number}[]=[];
+export function validateArrangement(melody:Note[],chords:Note[]):Note[][]{
+ const sparse=controlDensity(melody,chords);
+ const result:Note[][]=[[],[]];const accepted:{n:Note;track:number}[]=[];
  // Melody has priority. Lower parts are omitted if they collide or exceed a hand span.
- for(const [track,notes] of [melody,sparse.chords,sparse.bass].entries())for(const n of [...notes].sort((a,b)=>a.start-b.start||a.pitch-b.pitch)){
+ for(const [track,notes] of [melody,sparse.chords].entries())for(const n of [...notes].sort((a,b)=>a.start-b.start||a.pitch-b.pitch)){
  if(!Number.isFinite(n.start)||!Number.isFinite(n.end)||n.start<0||n.end<=n.start||!Number.isInteger(n.pitch)||n.pitch<21||n.pitch>108)throw Error('Invalid arrangement note');
  const concurrent=accepted.filter(a=>overlap(a.n,n.start,n.end)>0);if(track>0&&concurrent.some(a=>a.n.pitch===n.pitch))continue;
  const moments=[n.start,...concurrent.map(a=>Math.max(n.start,a.n.start))];let safe=true;for(const t of moments){const active=concurrent.filter(a=>a.n.start<=t&&a.n.end>t);if(active.length>=5){safe=false;break;}const left=[...(track>0?[n.pitch]:[]),...active.filter(a=>a.track>0).map(a=>a.n.pitch)];if(left.length&&Math.max(...left)-Math.min(...left)>12){safe=false;break;}if(track>0&&active.some(a=>a.track===0&&n.pitch>=a.n.pitch)){safe=false;break;}}
@@ -40,6 +40,6 @@ export function pianoArrangement(bytes:Uint8Array,estimatedBpm?:number):Uint8Arr
  const beat=60/bpm;const input=source.tracks.flatMap(t=>t.notes.map(n=>({pitch:n.midi,start:n.time/beat,end:(n.time+n.duration)/beat,velocity:n.velocity,confidence:0})));
  if(!input.length||input.length>30000||input.some(n=>!Number.isFinite(n.start)||!Number.isFinite(n.end)||n.start<0||n.end<=n.start||n.end>1024||!Number.isFinite(n.velocity)||!Number.isInteger(n.pitch)||n.pitch<0||n.pitch>127))throw Error('Invalid or oversized transcription');
  const cleaned=cleanNotes(input);if(!cleaned.length)throw Error('No reliable notes after cleanup');const key=detectKey(cleaned);const melody=extractMelody(cleaned);if(!melody.length)throw Error('No reliable melody; arrangement not generated');
- const total=Math.max(...cleaned.map(n=>n.end));const bars=optimizeChordProgression(cleaned,melody,key,total);const {chords,bass}=generateAccompaniment(bars,melody,bpm);const tracks=validateArrangement(melody,chords,bass);
- const midi=new Midi();midi.header.setTempo(bpm);['Melody · right hand','Chord accompaniment','Bass · left hand'].forEach((name,i)=>{const track=midi.addTrack();track.name=name;track.instrument.number=0;for(const n of tracks[i])track.addNote({midi:n.pitch,time:n.start*beat,duration:(n.end-n.start)*beat,velocity:Math.max(.1,Math.min(.9,n.velocity))});});return midi.toArray();
+ const total=Math.max(...cleaned.map(n=>n.end));const bars=optimizeChordProgression(cleaned,melody,key,total);const {chords}=generateAccompaniment(bars,melody,bpm);const tracks=validateArrangement(melody,chords);
+ const midi=new Midi();midi.header.setTempo(bpm);['Melody · right hand','Chord accompaniment'].forEach((name,i)=>{const track=midi.addTrack();track.name=name;track.instrument.number=0;for(const n of tracks[i])track.addNote({midi:n.pitch,time:n.start*beat,duration:(n.end-n.start)*beat,velocity:Math.max(.1,Math.min(.9,n.velocity))});});return midi.toArray();
 }
