@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfi
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && pip check
-COPY app.py .
+COPY app.py chunked.py ./
 RUN useradd --create-home worker
 USER worker
 EXPOSE 8000

@@ -9,9 +9,10 @@ import librosa
 import numpy as np
 import soundfile as sf
 from basic_pitch import ICASSP_2022_MODEL_PATH
-from basic_pitch.inference import Model, predict
+from basic_pitch.inference import Model
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
+from chunked import transcribe_chunks
 
 logger = logging.getLogger('uvicorn.error')
 model = None
@@ -78,13 +79,6 @@ def transcribe(audio: UploadFile = File(...), task: str = Form('transcription'))
                 raise HTTPException(413, 'Maximum duration is 60 seconds')
             if len(samples) < sr / 4 or not np.isfinite(samples).all() or np.max(np.abs(samples)) < 0.0001:
                 raise HTTPException(422, 'Audio is too short, silent or invalid')
-            try:
-                _, midi, events = predict(normalized, model)
-            except Exception:
-                logger.exception('Basic Pitch inference failed')
-                raise HTTPException(500, 'Basic Pitch inference failed; no MIDI generated')
-            if len(events) == 0:
-                raise HTTPException(422, 'Basic Pitch detected no notes')
             bpm = 120.0
             try:
                 tempo, _ = librosa.beat.beat_track(y=samples, sr=sr)
@@ -93,6 +87,13 @@ def transcribe(audio: UploadFile = File(...), task: str = Form('transcription'))
                     bpm = estimate
             except Exception:
                 logger.warning('Tempo estimation failed; using 120 BPM grid')
+            bpm = max(40, min(240, bpm))
+            try:
+                midi = transcribe_chunks(samples, sr, model, directory, bpm)
+            except RuntimeError as exc:
+                raise HTTPException(500, str(exc))
+            if not any(track.notes for track in midi.instruments):
+                raise HTTPException(422, 'Basic Pitch detected no notes')
             output = os.path.join(directory, 'transcription.mid')
             midi.write(output)
             with open(output, 'rb') as source:
