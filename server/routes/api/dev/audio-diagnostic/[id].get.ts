@@ -2,6 +2,7 @@ import { defineHandler } from 'nitro';
 import pkg from '@tonejs/midi';
 import { modelUrl } from '../../../../utils/piano-model';
 import { pianoArrangement } from '../../../../utils/piano-arrangement';
+import { arrangementDiagnostic } from '../../../../utils/arrangement-diagnostic';
 const { Midi } = pkg;
 type N={midi:number;time:number;duration:number};
 function metrics(notes:N[],end:number){
@@ -26,6 +27,7 @@ export default defineHandler(async event=>{
  if(!response.body)throw Error('Empty MIDI');const reader=response.body.getReader();let size=0;const chunks:Uint8Array[]=[];try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>2000000)throw Error('MIDI exceeds 2 MB');chunks.push(value);}}finally{await reader.cancel();}
  const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}const raw=new Midi(bytes);const notes=raw.tracks.flatMap(t=>t.notes);if(notes.length>30000)throw Error('Too many notes');const transcription=metrics(notes,raw.duration);
  const bpm=Number(response.headers.get('x-estimated-bpm'));const final=new Midi(pianoArrangement(bytes,Number.isFinite(bpm)&&bpm>=40&&bpm<=240?bpm:undefined));const melody=final.tracks.find(t=>t.name==='Melody · right hand');if(!melody)throw Error('Melody track missing');const result=metrics(melody.notes,raw.duration);
+ if(new URL(event.req.url).searchParams.get('detail')==='1')return Response.json(arrangementDiagnostic(bytes,final.toArray()),{headers:{'Cache-Control':'no-store'}});
  const rate=(m:typeof result)=>m.intervals9/Math.max(1,m.intervalCount);const findings:string[]=[];
  if(transcription.intervals9>0)findings.push('TRANSCRIPTION PROBLEM');
  if(rate(transcription)<.1&&rate(result)>rate(transcription)+.1)findings.push('MELODY EXTRACTION PROBLEM');
