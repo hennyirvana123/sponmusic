@@ -1,7 +1,8 @@
 import { defineHandler } from 'nitro';
-import { Midi } from '@tonejs/midi';
+import pkg from '@tonejs/midi';
 import { modelUrl } from '../../../../utils/piano-model';
 import { pianoArrangement } from '../../../../utils/piano-arrangement';
+const { Midi } = pkg;
 type N={midi:number;time:number;duration:number};
 function metrics(notes:N[],end:number){
  const sorted=[...notes].sort((a,b)=>a.time-b.time||a.midi-b.midi);

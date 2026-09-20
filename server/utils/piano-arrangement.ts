@@ -1,6 +1,7 @@
-import { Midi } from '@tonejs/midi';
+import pkg from '@tonejs/midi';
 import { refineMelody } from './melody-continuity';
 import { optimizeChordProgression, generateAccompaniment, controlDensity } from './piano-harmony';
+const { Midi } = pkg;
 export { generateChordCandidates, optimizeChordProgression, createVoicing, generateAccompaniment } from './piano-harmony';
 export type Note = { pitch:number; start:number; end:number; velocity:number; confidence:number };
 type Key = { root:number; minor:boolean; confidence:number; scale:number[] };
