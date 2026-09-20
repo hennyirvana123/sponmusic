@@ -76,26 +76,7 @@ export function generateChordCandidates(
 
   if (total < 0.15) return [];
 
-  const degrees = key.minor
-    ? [
-        [0, 3, 7],
-        [2, 3, 7],
-        [3, 4, 7],
-        [5, 3, 7],
-        [7, 3, 7],
-        [7, 4, 7],
-        [8, 4, 7],
-        [10, 4, 7],
-      ]
-    : [
-        [0, 4, 7],
-        [2, 3, 7],
-        [4, 3, 7],
-        [5, 4, 7],
-        [7, 4, 7],
-        [9, 3, 7],
-        [11, 3, 7],
-      ];
+  const degrees = Array.from({length:12},(_,degree)=>[[degree,3,7],[degree,4,7]]).flat();
 
   const candidates: Chord[] = [];
 
@@ -142,12 +123,10 @@ export function generateChordCandidates(
 
     score += (low[root] / total) * 0.35;
 
-    // Prefer tonic and dominant slightly.
-    if (degree === 0) score += 0.12;
-
-    if (degree === 5 || degree === 7) {
-      score += 0.06;
-    }
+    // A weak key estimate cannot exclude chromatic evidence or force the tonic.
+    const prior = Math.min(.08, Math.max(0,key.confidence)*.08);
+    score += prior * (pcs.filter(p=>key.scale.includes(p)).length/3);
+    if (degree === 0) score += prior*.2;
 
     candidates.push({
       root,
@@ -228,18 +207,8 @@ export function optimizeChordProgression(
               )
           );
 
-          // Strongly reward small root movement.
-          if (rootDistance === 0) {
-            transition += 0.45;
-          } else if (rootDistance <= 2) {
-            transition += 0.30;
-          } else if (rootDistance <= 4) {
-            transition += 0.15;
-          } else if (rootDistance <= 5) {
-            transition += 0.02;
-          } else {
-            transition -= 0.28;
-          }
+          // Transition influence is deliberately bounded below meaningful fit differences.
+          transition += rootDistance<=5 ? .01 : -.02;
 
           // Shared tones make transitions smoother.
           const shared =
@@ -247,10 +216,14 @@ export function optimizeChordProgression(
               chord.pcs.includes(p)
             ).length;
 
-          transition += shared * 0.10;
+          transition += shared * 0.015;
 
           if (same(previous.chord, chord)) {
-            transition += 0.30;
+            let run=1, layerIndex=layers.length-1, stateIndex=index;
+            while(layerIndex>0&&run<8){const state=layers[layerIndex][stateIndex];stateIndex=state.prev;layerIndex--;const prior=layers[layerIndex][stateIndex];if(!prior?.chord||!same(prior.chord,chord))break;run++;}
+            const bestFit=Math.max(...candidates.map(c=>c.score));
+            // Long holds are penalized only when another chord has better audio evidence.
+            transition += .025-Math.min(.12,Math.max(0,run-3)*.025)*Math.min(1,Math.max(0,bestFit-chord.score)*4);
           }
         } else if (
           !!previous.chord !== !!chord
