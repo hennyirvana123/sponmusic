@@ -1,5 +1,4 @@
 import { useRuntimeConfig } from 'nitro';
-import { pianoArrangement } from './piano-arrangement';
 export class ModelError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
 }
@@ -38,6 +37,6 @@ export async function arrange(audio: Uint8Array, mime: string, signal: AbortSign
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   if(new TextDecoder().decode(bytes.slice(0,4))!=='MThd')throw new ModelError(502,'MODEL_INVALID_MIDI','Respons Basic Pitch bukan file MIDI yang valid.');
   const bpm=Number(response.headers.get('x-estimated-bpm'));
-  try{return pianoArrangement(bytes,Number.isFinite(bpm)&&bpm>=40&&bpm<=240?bpm:undefined);}
+  try{const { pianoArrangement } = await import('./piano-arrangement');return pianoArrangement(bytes,Number.isFinite(bpm)&&bpm>=40&&bpm<=240?bpm:undefined);}
   catch{throw new ModelError(502,'MODEL_INVALID_MIDI','MIDI transkripsi rusak, tidak berisi not, atau melebihi batas aransemen. Tidak ada MIDI pengganti yang dibuat.');}
 }

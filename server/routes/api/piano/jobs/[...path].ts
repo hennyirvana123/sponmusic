@@ -1,6 +1,5 @@
 import { defineHandler } from 'nitro';
 import { modelUrl } from '../../../../utils/piano-model';
-import { pianoArrangement } from '../../../../utils/piano-arrangement';
 const error=(status:number,message:string)=>Response.json({message,code:`HTTP_${status}`},{status,headers:{'Cache-Control':'no-store'}});
 async function bytes(response:Response,limit:number){if(!response.body)throw Error('Empty response');const reader=response.body.getReader();const chunks:Uint8Array[]=[];let size=0;try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit)throw Error('Response too large');chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}const result=new Uint8Array(size);let offset=0;for(const c of chunks){result.set(c,offset);offset+=c.length;}return result;}
 export default defineHandler(async event=>{
@@ -28,7 +27,7 @@ export default defineHandler(async event=>{
  if(path.endsWith('/download')){
  const data=await bytes(response,2000000);if(new TextDecoder().decode(data.slice(0,4))!=='MThd')return error(502,'Respons Basic Pitch bukan MIDI');
  const bpm=Number(response.headers.get('x-estimated-bpm'));let midi:Uint8Array;
- try{midi=pianoArrangement(data,Number.isFinite(bpm)&&bpm>=40&&bpm<=240?bpm:undefined);}catch{return error(502,'MIDI tidak valid atau tahap aransemen gagal');}
+ try{const { pianoArrangement } = await import('../../../../utils/piano-arrangement');midi=pianoArrangement(data,Number.isFinite(bpm)&&bpm>=40&&bpm<=240?bpm:undefined);}catch(e){if(import.meta.dev){console.error('[piano jobs: arrangement import/execution]',e);return error(502,`Arrangement module/execution: ${e instanceof Error?e.message:String(e)}`);}return error(502,'MIDI tidak valid atau tahap aransemen gagal');}
  return new Response(new Uint8Array(midi),{headers:{'Content-Type':'audio/midi','Content-Disposition':'attachment; filename="piano-arrangement.mid"','Cache-Control':'no-store'}});
  }
  const data=JSON.parse(new TextDecoder().decode(await bytes(response,16384)));
