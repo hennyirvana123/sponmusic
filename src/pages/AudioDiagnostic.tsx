@@ -6,7 +6,14 @@ export default function AudioDiagnostic(){
  const [file,setFile]=useState<File|null>(null),[report,setReport]=useState<Report|null>(null),[status,setStatus]=useState('Pilih audio nyata. Maksimal 20 MB / 60 detik.'),[busy,setBusy]=useState(false),[consent,setConsent]=useState(false);const controller=useRef<AbortController|null>(null);
  useEffect(()=>()=>controller.current?.abort(),[]);
  const run=async()=>{if(!file)return;const c=new AbortController();controller.current=c;setBusy(true);setReport(null);
- const json=async(url:string,options:RequestInit={})=>{const r=await fetch(url,{...options,signal:c.signal});let data;try{data=await r.json();}catch{throw Error(`Respons non-JSON HTTP ${r.status}`);}if(!r.ok)throw Error(data.message||`HTTP ${r.status}`);return data;};
+ const json=async(url:string,options:RequestInit={})=>{
+ const method=options.method||'GET';let r:Response;
+ try{r=await fetch(url,{...options,signal:c.signal});}catch(e){throw Error(`${method} ${url} — ${c.signal.aborted?'Dibatalkan':`Network error: ${e instanceof Error?e.message:String(e)}`}`);}
+ const text=await r.text();let data;
+ try{data=JSON.parse(text);}catch{throw Error(`${method} ${url} — HTTP ${r.status} ${r.statusText}; response non-JSON: ${text.slice(0,8000)||'(body kosong)'}`);}
+ if(!r.ok)throw Error(`${method} ${url} — HTTP ${r.status} ${r.statusText}; backend response: ${JSON.stringify(data).slice(0,8000)}`);
+ if(!data||typeof data!=='object')throw Error(`${method} ${url} — HTTP ${r.status}; format respons invalid: ${text.slice(0,1000)}`);
+ return data;};
  try{setStatus('Upload…');const job=await json('/api/piano/jobs/submit',{method:'POST',headers:{'Content-Type':/\.wav$/i.test(file.name)?'audio/wav':'audio/mpeg'},body:file});const deadline=Date.now()+1800000;
  while(Date.now()<deadline){const state=await json(`/api/piano/jobs/${job.job_id}`);setStatus(`${job.job_id}: ${state.status}`);if(state.status==='failed')throw Error(state.error||'Transcription failed');if(state.status==='completed'){setStatus('Analisis transcription dan arrangement…');setReport(await json(`/api/dev/audio-diagnostic/${job.job_id}`));setStatus('Analisis selesai');return;}await new Promise<void>((resolve,reject)=>{const cancel=()=>{clearTimeout(timer);reject(new DOMException('Cancelled','AbortError'));};const timer=setTimeout(()=>{c.signal.removeEventListener('abort',cancel);resolve();},3000);c.signal.addEventListener('abort',cancel,{once:true});if(c.signal.aborted)cancel();});}throw Error('Batas menunggu 30 menit.');
  }catch(e){setStatus(e instanceof Error?e.message:'Diagnostic gagal');}finally{setBusy(false);}};

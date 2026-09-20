@@ -16,7 +16,12 @@ export default defineHandler(async event=>{
  if(!import.meta.dev)return new Response(null,{status:404});
  const id=new URL(event.req.url).pathname.split('/').pop()||'';if(!/^[a-f0-9]{32}$/.test(id))return Response.json({message:'Job invalid'},{status:400});
  try{const base=new URL(modelUrl());if(!['https:','http:'].includes(base.protocol)||base.username||base.password||base.search||base.hash)throw Error('URL model invalid');base.pathname=base.pathname.replace(/\/+$/,'').replace(/\/transcribe$/,'')+`/transcribe/${id}/download`;
- const response=await fetch(base,{redirect:'error',signal:AbortSignal.timeout(45000)});if(!response.ok)return Response.json({message:`Download transcription HTTP ${response.status}`},{status:response.status});
+ const response=await fetch(base,{redirect:'error',signal:AbortSignal.timeout(45000)});
+ if(!response.ok){
+ let detail='(body kosong)';
+ if(response.body){const reader=response.body.getReader();const decoder=new TextDecoder();let received=0;let text='';try{while(received<8000){const {done,value}=await reader.read();if(done)break;const part=value.slice(0,8000-received);received+=part.length;text+=decoder.decode(part,{stream:true});}text+=decoder.decode();detail=text||detail;}finally{await reader.cancel().catch(()=>{});}}
+ return Response.json({message:'Basic Pitch download gagal',stage:'download-transcription',endpoint:base.pathname,upstreamStatus:response.status,detail},{status:response.status,headers:{'Cache-Control':'no-store'}});
+ }
  if(!response.body)throw Error('Empty MIDI');const reader=response.body.getReader();let size=0;const chunks:Uint8Array[]=[];try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>2000000)throw Error('MIDI exceeds 2 MB');chunks.push(value);}}finally{await reader.cancel();}
  const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}const raw=new Midi(bytes);const notes=raw.tracks.flatMap(t=>t.notes);if(notes.length>30000)throw Error('Too many notes');const transcription=metrics(notes,raw.duration);
  const bpm=Number(response.headers.get('x-estimated-bpm'));const final=new Midi(pianoArrangement(bytes,Number.isFinite(bpm)&&bpm>=40&&bpm<=240?bpm:undefined));const melody=final.tracks.find(t=>t.name==='Melody · right hand');if(!melody)throw Error('Melody track missing');const result=metrics(melody.notes,raw.duration);
