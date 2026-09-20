@@ -1,5 +1,5 @@
 import { defineHandler } from 'nitro';
-import { arrange, modelUrl } from '../../../utils/piano-model';
+import { arrange, modelUrl, ModelError } from '../../../utils/piano-model';
 const json=(status:number,message:string,code:string)=>Response.json({message,code},{status});
 let busy=false;
 export default defineHandler(async event=>{
@@ -19,7 +19,12 @@ export default defineHandler(async event=>{
  const mp3=text.decode(bytes.slice(0,3))==='ID3'||(bytes[0]===255&&(bytes[1]&224)===224);
  if(!size||!(wav||mp3))return json(415,'Isi file tidak dikenali sebagai MP3/WAV.','INVALID_AUDIO');
  if(!modelUrl())return json(503,'Audio valid. Model AI belum terhubung; tidak ada MIDI yang dihasilkan.','MODEL_NOT_CONFIGURED');
- const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),120000);const abort=()=>controller.abort();req.signal.addEventListener('abort',abort,{once:true});
- try{const midi=await arrange(bytes,wav?'audio/wav':'audio/mpeg',controller.signal);return new Response(new Uint8Array(midi),{headers:{'Content-Type':'audio/midi','Content-Disposition':'attachment; filename="piano-arrangement.mid"','Cache-Control':'no-store'}});}catch{return json(502,'Model gagal atau melewati batas waktu 2 menit. Tidak ada hasil palsu yang dibuat.','MODEL_FAILED');}finally{clearTimeout(timer);req.signal.removeEventListener('abort',abort);}
+ const controller=new AbortController();let timedOut=false;const timer=setTimeout(()=>{timedOut=true;controller.abort();},120000);const abort=()=>controller.abort();req.signal.addEventListener('abort',abort,{once:true});if(req.signal.aborted)controller.abort();
+ try{const midi=await arrange(bytes,wav?'audio/wav':'audio/mpeg',controller.signal);return new Response(new Uint8Array(midi),{headers:{'Content-Type':'audio/midi','Content-Disposition':'attachment; filename="piano-arrangement.mid"','Cache-Control':'no-store'}});}catch(e){
+ if(timedOut)return json(504,'Basic Pitch belum selesai setelah 2 menit. Coba audio lebih pendek atau periksa server Render.','MODEL_TIMEOUT');
+ if(req.signal.aborted)return json(408,'Permintaan dibatalkan oleh klien.','REQUEST_CANCELLED');
+ if(e instanceof ModelError)return json(e.status,e.message,e.code);
+ return json(502,'Pemrosesan Basic Pitch gagal. Tidak ada MIDI pengganti yang dibuat.','MODEL_FAILED');
+ }finally{clearTimeout(timer);req.signal.removeEventListener('abort',abort);}
  }finally{busy=false;}
 });
