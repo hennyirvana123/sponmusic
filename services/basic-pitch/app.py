@@ -5,7 +5,8 @@ import shutil
 import tempfile
 import time
 import uuid
-from contextlib import asynccontextmanager
+import threading
+from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
@@ -22,7 +23,31 @@ def create_app(loader=None, processor=None):
         processor = process
     jobs = {}
     queue = asyncio.Queue(maxsize=8)
-    state = {'model': None, 'busy': False}
+    state = {'model': None, 'busy': False, 'stopping': False}
+
+    async def inference(job):
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        def deliver(result, error):
+            if not future.done():
+                if error is not None:
+                    future.set_exception(error)
+                else:
+                    future.set_result(result)
+        def run():
+            result, error = None, None
+            try:
+                result = processor(job['path'], job['directory'], state['model'])
+            except Exception as exc:
+                error = exc
+            finally:
+                shutil.rmtree(job['directory'], ignore_errors=True)
+            try:
+                loop.call_soon_threadsafe(deliver, result, error)
+            except RuntimeError:
+                pass
+        threading.Thread(target=run, daemon=True, name='basic-pitch-inference').start()
+        return await future
 
     async def worker():
         while True:
@@ -33,8 +58,11 @@ def create_app(loader=None, processor=None):
             job['status'] = 'processing'
             state['busy'] = True
             try:
-                data, bpm = await asyncio.to_thread(processor, job['path'], job['directory'], state['model'])
+                data, bpm = await inference(job)
                 job.update(status='completed', data=data, bpm=bpm)
+            except asyncio.CancelledError:
+                job.update(status='failed', error='Service shutting down; inference interrupted')
+                raise
             except Exception as exc:
                 logger.exception('Transcription job failed')
                 job.update(status='failed', error=str(exc) if isinstance(exc, (ValueError, RuntimeError)) else 'Audio processing failed; no MIDI generated')
@@ -57,16 +85,30 @@ def create_app(loader=None, processor=None):
         state['model'] = await asyncio.to_thread(loader)
         task = asyncio.create_task(worker())
         cleaner = asyncio.create_task(reap())
-        yield
-        cleaner.cancel()
-        # Do not delete input files while inference is still accessing them.
-        while not queue.empty():
-            job = queue.get_nowait()
-            shutil.rmtree(job['directory'], ignore_errors=True)
-            queue.task_done()
-        await queue.put(None)
-        await task
-        jobs.clear()
+        try:
+            yield
+        finally:
+            state['stopping'] = True
+            cleaner.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleaner
+            while not queue.empty():
+                job = queue.get_nowait()
+                if job is not None:
+                    shutil.rmtree(job['directory'], ignore_errors=True)
+                queue.task_done()
+            queue.put_nowait(None)
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=20)
+            except asyncio.TimeoutError:
+                logger.warning('Shutdown grace expired; abandoning daemon inference thread')
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            finally:
+                for job in jobs.values():
+                    shutil.rmtree(job['directory'], ignore_errors=True)
+                jobs.clear()
 
     app = FastAPI(title='SPONMUSIC async Basic Pitch', lifespan=lifespan)
 
@@ -82,8 +124,8 @@ def create_app(loader=None, processor=None):
         try:
             if task != 'transcription':
                 raise HTTPException(400, 'Use task=transcription')
-            if state['model'] is None:
-                raise HTTPException(503, 'Model not loaded')
+            if state['model'] is None or state['stopping']:
+                raise HTTPException(503, 'Model not loaded or service shutting down')
             if queue.full() or len(jobs) >= 64:
                 raise HTTPException(429, 'Job capacity reached; retry later')
             directory = tempfile.mkdtemp(prefix='basic-pitch-')
