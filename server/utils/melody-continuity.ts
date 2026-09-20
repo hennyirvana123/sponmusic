@@ -1,3 +1,4 @@
+import { scoreLeadCandidates } from './melody-candidate-scoring';
 type Note={pitch:number;start:number;end:number;velocity:number;confidence:number};
 type Group={time:number;notes:Note[]};
 const median=(v:number[])=>[...v].sort((a,b)=>a-b)[Math.floor(v.length/2)]??60;
@@ -32,6 +33,8 @@ export function accompanimentPatternPenalty(history:Note[],candidate:Note,contex
  return (competing?.65:.08)*regular*alternating*(uniform>.6?1.3:.6)*(median(h.map(n=>n.pitch))<65?1:.7);
 }
 export function refineMelody(notes:Note[],_scale:number[]):Note[]{
+ const features=scoreLeadCandidates(notes);
+ const leadScore=(n:Note)=>{const f=features.get(n)!;return (f.leadLikelihood-.4)*.8-f.accompanimentLikelihood*1.5;};
  type Path={score:number;line:Note[]};const output:Note[]=[];
  for(const phrase of segmentMelodyPhrases(notes)){
  const onset=groups(phrase.notes);let beam:Path[]=[{score:0,line:[]}];
@@ -42,14 +45,14 @@ export function refineMelody(notes:Note[],_scale:number[]):Note[]{
  const interval=last?n.pitch-last.pitch:0;const gap=last?n.start-last.end:0;
  const pattern=accompanimentPatternPenalty(path.line,n,phrase.notes);
  let projected=[{score:0,line:[...path.line.slice(-6),n],depth:0}];
- for(const f of future){const possibilities=[...projected];for(const p of projected){const tail=p.line[p.line.length-1];for(const candidate of f.notes){if(candidate.start<=tail.start||candidate.start-tail.end>1.5)continue;const leap=Math.abs(candidate.pitch-tail.pitch);possibilities.push({score:p.score+.16+Math.min(candidate.end-candidate.start,1)*.1-Math.max(0,leap-5)*.04-accompanimentPatternPenalty(p.line,candidate,phrase.notes),line:[...p.line.slice(-7),candidate],depth:p.depth+1});}}projected=possibilities.sort((a,b)=>b.score-a.score).slice(0,8);}
+ for(const f of future){const possibilities=[...projected];for(const p of projected){const tail=p.line[p.line.length-1];for(const candidate of f.notes){if(candidate.start<=tail.start||candidate.start-tail.end>1.5)continue;const leap=Math.abs(candidate.pitch-tail.pitch);possibilities.push({score:p.score+.16+Math.min(candidate.end-candidate.start,1)*.1+leadScore(candidate)*.6-Math.max(0,leap-5)*.04-accompanimentPatternPenalty(p.line,candidate,phrase.notes),line:[...p.line.slice(-7),candidate],depth:p.depth+1});}}projected=possibilities.sort((a,b)=>b.score-a.score).slice(0,8);}
  const support=projected[0];const lookahead=Math.min(.65,support.score*.4);
  const leapPenalty=Math.max(0,Math.abs(interval)-7)*.07+Math.max(0,Math.abs(interval)-12)*.15;
  const reversal=before&&interval*(last.pitch-before.pitch)<0&&Math.abs(interval)>9?.2:0;
  const continuation=last&&gap<.5&&Math.abs(interval)<=7?.13:0;
  const interruption=last&&last.end-n.start>.4&&last.confidence>n.confidence?.22:0;
  const local=median(path.line.slice(-5).map(x=>x.pitch));const register=last?Math.max(0,Math.abs(n.pitch-local)-10)*.035:0;
- const reward=.25*Math.min(n.end-n.start,2)+n.confidence*.28-.25+lookahead+continuation-pattern-leapPenalty*(support.depth>=3?.5:1)-reversal-register-interruption;
+ const reward=.25*Math.min(n.end-n.start,2)+n.confidence*.28-.25+leadScore(n)+lookahead+continuation-pattern-leapPenalty*(support.depth>=3?.5:1)-reversal-register-interruption;
  next.push({score:path.score+reward,line:[...path.line,n]});
  }}
  const seen=new Set<string>();beam=next.sort((a,b)=>b.score-a.score).filter(p=>{const key=p.line.slice(-5).map(n=>`${n.start}:${n.pitch}`).join('|');if(seen.has(key))return false;seen.add(key);return true;}).slice(0,40);
