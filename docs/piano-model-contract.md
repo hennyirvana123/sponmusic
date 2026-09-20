@@ -1,31 +1,37 @@
-# AI Piano Arrangement — external model contract
+# Basic Pitch integration — SPONMUSIC
 
-No transcription model is bundled or connected. No paid provider is used. The adapter does not fabricate MIDI.
+## What is implemented
+Audio upload → Nitro adapter → separate Spotify Basic Pitch service → actual transcription MIDI → SPONMUSIC rule-based arrangement engine → new piano MIDI → existing Studio, falling notes, playback and download.
 
-## Browser API
-- GET /api/piano/status: configured, status, message, maxBytes, formats. Configured does not mean healthy.
-- POST /api/piano/arrange: raw MP3 or WAV body; Content-Type audio/mpeg or audio/wav. Max 20 MB, checked while streaming. Basic signature validation is not full decoding; the external model must decode and validate duration/content.
-- Success: binary Standard MIDI File, audio/midi, max 2 MB.
-- Errors: JSON {message, code}; 400 missing audio, 403 origin, 413 size, 415 format, 429 busy, 503 MODEL_NOT_CONFIGURED, 502 model failure/timeout.
+No dummy notes, no paid API, no custom trained model. Basic Pitch provides transcription only. Melody selection, major/minor chord inference, bass patterns, quantization and compact voicings are deterministic heuristics, NOT a learned arrangement model. Complex mixes may produce inaccurate melody/harmony. This is not guaranteed professional two-hand sheet music.
 
-## External adapter
-Configure NITRO_PIANO_MODEL_URL in the server deployment environment to the full POST endpoint of your separately deployed open-source model. Redeploy/restart server after configuration. No browser-provided endpoint URLs accepted. Redirects disabled. Keep the model endpoint private to your infrastructure.
+## Service deployment
+`services/basic-pitch/` contains a Dockerfile, Python dependency requirements and FastAPI application. Deploy this directory as the Docker build context on your own Python-capable server. Container listens on port 8000 with one worker. Model loads at startup; GET /health reports readiness. Build/dependency resolution and inference have NOT been executed in this environment. Validate on your target Linux server before use. Basic Pitch 0.4.0 is pinned; inspect upstream model/package licensing before distribution.
 
-SPONMUSIC sends multipart/form-data:
-- audio: MP3/WAV file (generic name)
-- task: piano-arrangement
+Set server environment `NITRO_PIANO_MODEL_URL` to the deployed service's full `/transcribe` endpoint via your deployment settings; then restart/redeploy Nitro. No URL is preconfigured. Keep the service private behind an authenticated gateway/network. Open-source software is free to use subject to its license; hosting still uses your own compute resources.
 
-The service must perform real transcription/arrangement and return MIDI bytes (MThd header), with piano tracks, original pitches, and tempo metadata. Return non-2xx when unavailable/failed. Changing task semantics or provider protocol belongs in server/utils/piano-model.ts. SPONMUSIC cannot infer whether a model performs transcription only or true arrangement: document your model's actual capabilities.
+## API
+GET /api/piano/status reports configuration only, not model health.
+POST /api/piano/arrange accepts raw audio/mpeg or audio/wav, maximum 20 MB. No model configured: 503, no output. Model failure: 502. Success: new arrangement as audio/midi.
 
-## Lifecycle and limits
-Synchronous request, 120-second model timeout; no database, job polling or durable uploads. Audio buffered in memory, not written to disk by this backend. One request per server process; not a distributed rate limit. Results live in browser memory until opened in studio or downloaded. Cancel aborts the browser request; external service must implement disconnect cancellation to stop compute. Uploaded audio is sent to external model only when configured. Model storage policies are separate.
+Adapter sends multipart POST to configured URL:
+- audio: uploaded MP3/WAV
+- task: transcription
 
-Before public deployment add authentication/abuse protection at gateway, request timeouts, a global concurrency quota, and reverse-proxy upload size limits. Large/slow models need a durable job queue and status/result endpoints in a later phase. Do not expose this unauthenticated foundation to unrestricted expensive workloads.
+Service returns Standard MIDI File bytes plus optional X-Estimated-BPM header (40–240). It runs Basic Pitch predict on decoded real waveform. Silence, decode failure, no notes and invalid sizes are rejected, not replaced with a melody. Librosa estimates tempo; when no tempo is detected the time grid uses 120 BPM, without inventing transcription notes.
 
-## Manual checks
-1. With no model configured, upload valid MP3/WAV: expect 503 and explicit unavailable message, no MIDI.
-2. Invalid file signature or >20 MB: reject without invoking model.
-3. Connect actual model: response MIDI opens studio without the regular +12 import transpose; preview audio, piano roll and falling notes use existing studio.
-4. Verify download, cancel, model failure, malformed MIDI and timeout.
+Service limit: 60 seconds of audio, 20 MB, one inference at a time. Nitro timeout: 120 seconds. CPU inference may exceed this: use appropriately provisioned hardware or implement a durable queue later. Cancelling the browser request does not guarantee already-running Python inference stops. Uploaded temporary files are removed at request completion. No durable queue or result store.
 
-YouTube support is intentionally absent. No model training or billing integration is implemented.
+## Arrangement engine
+server/utils/piano-arrangement.ts validates transcription, quantizes to 1/16 grid, extracts monophonic upper melody with continuity scoring, infers per-bar major/minor chords from duration-weighted pitch classes, chooses compact inversions, and alternates bass with chord accompaniment. Output has three piano tracks. Melody is octave-folded into C4–C6; accompaniment uses lower registers. Rhythm uses a 4/4 grid. This intentionally simplifies the transcription rather than copying every instrument. Empty bars stay silent.
+
+Studio opens AI output at original generated pitch (no +12 import shift). Download returns the newly arranged MIDI, not the raw Basic Pitch MIDI.
+
+## Required verification on real server
+1. Build container and wait for /health ready.
+2. Upload a permitted short solo recording; verify actual model inference and MIDI output.
+3. Try polyphonic audio and compare melody/chords manually.
+4. Verify silence rejection, corrupt audio, >60 seconds, size limits, busy, timeout, and unreachable model.
+5. Confirm MIDI has melody/chord/bass tracks, opens in Studio, plays, and produces falling notes.
+
+Before public exposure add gateway authentication, upload/time limits and distributed abuse/concurrency controls. The single-process busy guard is not global protection. YouTube is not implemented.
