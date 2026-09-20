@@ -15,3 +15,13 @@ Limits: four queued jobs, twelve retained jobs, one active inference. Files expi
 Let Her Go validation: upload the exact same permitted test excerpt. Compare vocals with original for missed syllables, instrument leakage, and octave/pitch artifacts; compare instrumental for harmonic content and alignment. Do not continue to claim melody accuracy from health or numerical statistics alone.
 
 Next gate: successful real deployment/test on separate development hardware, then a dedicated melody service. Production SPONMUSIC remains unchanged.
+
+## Stage 1 Verification
+
+`verify.py` is an independent Python verifier. Its arguments are `--url` (running service origin), `--audio` (existing user-supplied MP3/WAV), `--output` (download directory), and optional `--timeout` (polling deadline, default 1800 seconds). Run it with a Python runtime containing numpy and soundfile, with ffprobe available on PATH; those dependencies are already in the service Docker environment. For container-based verification, mount the script and input/output directories into an instance of the built service image and select Python with verify.py as its entrypoint. Use the reachable service origin, not the verifier container's localhost unless sharing its network.
+
+The verifier checks health and diagnostics, submits multipart audio, polls one job, downloads all three WAVs, inspects decoded samples, duration/sample-rate/channel alignment, SHA-256 and duplicate decoded audio. Output is one JSON report on stdout and exit status 0 only for verified output. Downloaded files remain under output/job_id for listening; server expiry does not delete these copies.
+
+Missing audio reports TEST_AUDIO_MISSING before network or inference. Missing model reports MODEL_LOAD_FAILED through diagnostics. Caught memory allocation exceptions report RESOURCE_FAILURE. An unreachable/OOM-killed container cannot report its cause: verifier returns SERVICE_UNREACHABLE rather than falsely asserting resource failure. Check container termination/OOM logs separately. Timeouts do not prove CPU/RAM exhaustion. Hardware utilization is not measured.
+
+Diagnostics never exposes environment values, credentials or filesystem locations. SHA differences are not mathematical proof of source separation: actual model invocation is established by source inspection plus reported provenance, and sonic quality needs listening. The verifier rejects silent stems for review even though truly instrumental input may legitimately have no vocals. No test audio is bundled, and no verification run has been performed in this environment.

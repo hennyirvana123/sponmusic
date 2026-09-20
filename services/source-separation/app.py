@@ -21,6 +21,7 @@ jobs = {}
 queue = asyncio.Queue(maxsize=4)
 model = None
 busy = False
+model_error = None
 
 
 def separate(job):
@@ -63,9 +64,10 @@ async def worker():
         try:
             job['analysis'] = await asyncio.to_thread(separate, job)
             job['status'] = 'completed'
-        except Exception:
+        except Exception as exc:
             log.exception('Source separation failed')
-            job.update(status='failed', error='Source separation/decode failed. No stems returned.')
+            resource = isinstance(exc, (MemoryError, torch.cuda.OutOfMemoryError))
+            job.update(status='failed', error_code='RESOURCE_FAILURE' if resource else 'SEPARATION_FAILED', error='Memory allocation failed' if resource else 'Source separation/decode failed; see server logs for exception details. No stems returned.')
             shutil.rmtree(job['folder'], ignore_errors=True)
         finally:
             job['processing_seconds'] = time.monotonic()-started
@@ -85,9 +87,15 @@ async def cleanup():
 
 @asynccontextmanager
 async def lifespan(app):
-    global model
-    model = await asyncio.to_thread(get_model, 'htdemucs')
-    model.eval()
+    global model, model_error
+    try:
+        model = await asyncio.to_thread(get_model, 'htdemucs')
+        model.eval()
+        model_error = None
+    except Exception as exc:
+        model = None
+        model_error = 'RESOURCE_FAILURE' if isinstance(exc, (MemoryError, torch.cuda.OutOfMemoryError)) else 'MODEL_LOAD_FAILED'
+        log.exception('Demucs model load failed')
     task = asyncio.create_task(worker())
     cleaner = asyncio.create_task(cleanup())
     try:
@@ -110,10 +118,21 @@ app = FastAPI(title='SPONMUSIC source separation', lifespan=lifespan)
 async def health():
     return {'ready': model is not None, 'busy': busy, 'model': 'htdemucs'}
 
+@app.get('/diagnostics')
+async def diagnostics():
+    from importlib.metadata import version
+    return {'engine': 'demucs', 'model': 'htdemucs', 'version': version('demucs'),
+            'busy': busy, 'modelAvailable': model is not None, 'errorCode': model_error,
+            'sources': list(model.sources) if model is not None else [],
+            'limits': {'maxBytes': 20_000_000, 'maxSeconds': 60, 'queueSize': 4},
+            'instrumentalMethod': 'sum-of-non-vocal-model-stems'}
+
 @app.post('/separate', status_code=202)
 async def submit(audio: UploadFile = File(...)):
     folder = None
     try:
+        if model is None:
+            raise HTTPException(503, model_error or 'MODEL_LOAD_FAILED')
         if queue.full() or len(jobs) >= 12:
             raise HTTPException(429, 'Separation capacity reached')
         folder = tempfile.mkdtemp(prefix='sponmusic-stems-')
