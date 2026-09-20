@@ -1,21 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-type Metrics={total:number;min:number|null;max:number|null;octaves:Record<string,number>;intervals9:number;intervals12:number;octaveSwitches:number;rests:number;restSeconds:number;averageInterval:number;onsetProxyNotes:number};
-type Report={transcription:Metrics;melody:Metrics;findings:string[];warning:string;tracks:{name:string;notes:number}[]};
 export default function AudioDiagnostic(){
- const [file,setFile]=useState<File|null>(null),[report,setReport]=useState<Report|null>(null),[status,setStatus]=useState('Pilih audio nyata. Maksimal 20 MB / 60 detik.'),[busy,setBusy]=useState(false),[consent,setConsent]=useState(false);const controller=useRef<AbortController|null>(null);
+ const [file,setFile]=useState<File|null>(null),[report,setReport]=useState<Record<string,unknown>|null>(null),[status,setStatus]=useState('Select MP3/WAV, up to 20 MB / 60 seconds.'),[busy,setBusy]=useState(false),[consent,setConsent]=useState(false),[copyStatus,setCopyStatus]=useState('');
+ const controller=useRef<AbortController|null>(null);
  useEffect(()=>()=>controller.current?.abort(),[]);
- const run=async()=>{if(!file)return;const c=new AbortController();controller.current=c;setBusy(true);setReport(null);
+ const run=async()=>{
+ if(!file||busy)return;
+ const c=new AbortController();controller.current=c;setBusy(true);setReport(null);setCopyStatus('');
  const json=async(url:string,options:RequestInit={})=>{
  const method=options.method||'GET';let r:Response;
- try{r=await fetch(url,{...options,signal:c.signal});}catch(e){throw Error(`${method} ${url} — ${c.signal.aborted?'Dibatalkan':`Network error: ${e instanceof Error?e.message:String(e)}`}`);}
+ try{r=await fetch(url,{...options,signal:c.signal});}catch(e){throw Error(`${method} ${url}: ${c.signal.aborted?'Cancelled':e instanceof Error?e.message:String(e)}`);}
  const text=await r.text();let data;
- try{data=JSON.parse(text);}catch{throw Error(`${method} ${url} — HTTP ${r.status} ${r.statusText}; response non-JSON: ${text.slice(0,8000)||'(body kosong)'}`);}
- if(!r.ok)throw Error(`${method} ${url} — HTTP ${r.status} ${r.statusText}; backend response: ${JSON.stringify(data).slice(0,8000)}`);
- if(!data||typeof data!=='object')throw Error(`${method} ${url} — HTTP ${r.status}; format respons invalid: ${text.slice(0,1000)}`);
- return data;};
- try{setStatus('Upload…');const job=await json('/api/piano/jobs/submit',{method:'POST',headers:{'Content-Type':/\.wav$/i.test(file.name)?'audio/wav':'audio/mpeg'},body:file});const deadline=Date.now()+1800000;
- while(Date.now()<deadline){const state=await json(`/api/piano/jobs/${job.job_id}`);setStatus(`${job.job_id}: ${state.status}`);if(state.status==='failed')throw Error(state.error||'Transcription failed');if(state.status==='completed'){setStatus('Analisis transcription dan arrangement…');setReport(await json(`/api/dev/audio-diagnostic/${job.job_id}`));setStatus('Analisis selesai');return;}await new Promise<void>((resolve,reject)=>{const cancel=()=>{clearTimeout(timer);reject(new DOMException('Cancelled','AbortError'));};const timer=setTimeout(()=>{c.signal.removeEventListener('abort',cancel);resolve();},3000);c.signal.addEventListener('abort',cancel,{once:true});if(c.signal.aborted)cancel();});}throw Error('Batas menunggu 30 menit.');
- }catch(e){setStatus(e instanceof Error?e.message:'Diagnostic gagal');}finally{setBusy(false);}};
- return <main className="!max-w-5xl space-y-5"><h1>Developer · Audio diagnostic</h1><p className="text-purple-200">Tidak mengubah algoritma. Menggunakan service Basic Pitch yang dikonfigurasi dan engine arrangement saat ini.</p><input type="file" accept=".mp3,.wav" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f&&/\.(mp3|wav)$/i.test(f.name)&&f.size<=20000000)setFile(f);else{setFile(null);setStatus('Gunakan MP3/WAV maksimal 20 MB');}}}/><label className="flex gap-2"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>Saya berhak menggunakan audio ini dan mengizinkan dikirim ke backend/model.</label><div className="flex gap-3"><Button disabled={!file||!consent||busy} onClick={run}>Jalankan diagnostic</Button>{busy&&<Button onClick={()=>controller.current?.abort()}>Hentikan menunggu</Button>}</div><p role="status">{status}</p>{report&&<><p className="rounded-xl border border-amber-700 p-4 text-amber-200">{report.warning}</p><h2>Indikasi heuristik (bukan root cause terverifikasi)</h2><ul>{report.findings.map(f=><li key={f}>{f}</li>)}</ul><div className="overflow-auto"><table className="w-full text-sm"><thead><tr><th className="text-left p-3">Metrik</th><th>Transcription post-processing</th><th>Final melody</th></tr></thead><tbody>{(['total','min','max','onsetProxyNotes','intervals9','intervals12','octaveSwitches','rests','restSeconds','averageInterval'] as const).map(k=><tr key={k} className="border-b border-purple-900"><td className="p-3">{k}</td><td className="text-center">{report.transcription[k]?.toFixed(2)??'—'}</td><td className="text-center">{report.melody[k]?.toFixed(2)??'—'}</td></tr>)}</tbody></table></div><h2>Transcription: jumlah not per oktaf</h2><pre>{JSON.stringify(report.transcription.octaves,null,2)}</pre><h2>Track hasil arrangement</h2><pre>{JSON.stringify(report.tracks,null,2)}</pre></>}</main>;
+ try{data=JSON.parse(text);}catch{throw Error(`${method} ${url}: HTTP ${r.status}; non-JSON response: ${text.slice(0,8000)||'(empty)'}`);}
+ if(!r.ok)throw Error(`${method} ${url}: HTTP ${r.status}; ${JSON.stringify(data).slice(0,8000)}`);
+ if(!data||typeof data!=='object')throw Error(`Invalid response from ${url}`);return data;
+ };
+ try{
+ setStatus('Uploading audio…');
+ const job=await json('/api/piano/jobs/submit',{method:'POST',headers:{'Content-Type':/\.wav$/i.test(file.name)?'audio/wav':'audio/mpeg'},body:file});
+ if(!/^[a-f0-9]{32}$/.test(job.job_id))throw Error('Invalid job ID');
+ const deadline=Date.now()+1800000;
+ while(Date.now()<deadline){
+ const state=await json(`/api/piano/jobs/${job.job_id}`);setStatus(`${job.job_id}: ${state.status}`);
+ if(state.status==='failed')throw Error(state.error||'Transcription failed');
+ if(state.status==='completed'){
+ setStatus('Analyzing transcription and arrangement…');
+ const data=await json(`/api/dev/audio-diagnostic/${job.job_id}?detail=1`);
+ setReport({testFile:file.name,jobId:job.job_id,...data});setStatus('Diagnostic complete. Results are heuristic, not a verified root cause.');return;
+ }
+ if(!['queued','processing'].includes(state.status))throw Error('Unexpected job status');
+ await new Promise<void>((resolve,reject)=>{const cancel=()=>{clearTimeout(timer);c.signal.removeEventListener('abort',cancel);reject(new DOMException('Cancelled','AbortError'));};const timer=setTimeout(()=>{c.signal.removeEventListener('abort',cancel);resolve();},3000);c.signal.addEventListener('abort',cancel,{once:true});if(c.signal.aborted)cancel();});
+ }throw Error('30-minute waiting limit reached.');
+ }catch(e){setStatus(e instanceof Error?e.message:'Diagnostic failed');}finally{setBusy(false);}
+ };
+ const text=report?JSON.stringify(report,null,2):'';
+ return <main className="!max-w-5xl space-y-5"><Link to="/" className="text-violet-300">← SPONMUSIC</Link><h1>Analyze Arrangement (DEV)</h1><p className="text-purple-200">Upload the test recording. This uses the existing async transcription service and current arrangement engine. No demo results.</p><input aria-label="Diagnostic audio" type="file" accept=".mp3,.wav" disabled={busy} onChange={e=>{setReport(null);setCopyStatus('');const f=e.target.files?.[0];if(f&&/\.(mp3|wav)$/i.test(f.name)&&f.size<=20000000)setFile(f);else{setFile(null);setStatus('Choose MP3/WAV, maximum 20 MB.');}}}/><label className="flex gap-2"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>I have permission to process this recording and send it to the configured backend/model.</label><div className="flex gap-3"><Button className="primary-button" disabled={!file||!consent||busy} onClick={run}>Run diagnostic</Button>{busy&&<Button className="soft-button" onClick={()=>controller.current?.abort()}>Stop waiting</Button>}</div><p role="status" className="whitespace-pre-wrap break-words">{status}</p>{report&&<section className="space-y-3"><Button className="soft-button" onClick={async()=>{try{await navigator.clipboard.writeText(text);setCopyStatus('JSON copied.');}catch{setCopyStatus('Clipboard unavailable. Select and copy the JSON below manually.');}}}>Copy JSON</Button><span role="status" className="ml-3 text-sm">{copyStatus}</span><pre className="max-h-[65vh] overflow-auto rounded-xl border border-violet-800 bg-violet-950/40 p-4 text-xs text-purple-100" tabIndex={0}>{text}</pre></section>}</main>;
 }

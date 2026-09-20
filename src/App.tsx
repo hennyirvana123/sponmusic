@@ -17,6 +17,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        {import.meta.env.DEV && <div className="border-b border-violet-800 bg-violet-950 px-5 py-2 text-right"><Link to="/dev/audio-diagnostic" className="inline-flex rounded-lg border border-violet-400 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-800">Analyze Arrangement (DEV)</Link></div>}
         <Routes>
           <Route path="/" element={<><Home /><div className="bg-[#120e1d] px-6 pb-12 text-center"><Link className="inline-block rounded-xl border border-violet-500 px-6 py-3 text-violet-200 hover:bg-violet-900/40" to="/ai-arrangement">AI Piano Arrangement · Upload MP3/WAV <span className="ml-2 text-xs">Fondasi / model eksternal</span></Link></div></>} />
           <Route path="/studio" element={<Index />} />
