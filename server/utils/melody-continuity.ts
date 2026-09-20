@@ -14,8 +14,8 @@ export function refineMelody(notes:Note[],scale:number[]):Note[]{
  for(const path of beam){next.push(path);const last=path.history[path.history.length-1],before=path.history[path.history.length-2];
  // Candidate pruning depends on each path, not velocity or highest pitch.
  const choices=[...group].sort((a,b)=>{const cost=(n:Candidate)=>n.spikePenalty+Math.abs(n.pitch-(last?.pitch??n.registerCenter))*.08-n.futureSupport*.12;return cost(a)-cost(b);}).slice(0,12);
- for(const n of choices){if(last&&t-last.start<.15)continue;
- const newPhrase=!last||t-last.end>=1.5;const phraseIndex=newPhrase?i:path.phraseIndex;const early=i-phraseIndex<8;
+ for(const n of choices){if(last&&n.start-last.start<.055)continue;
+ const newPhrase=!last||n.start-last.end>=1.5;const phraseIndex=newPhrase?i:path.phraseIndex;const early=i-phraseIndex<8;
  const anchor=newPhrase?n.registerCenter:path.anchor!;const interval=last?n.pitch-last.pitch:0;
  let motif=n.repeated?.15:0;
  if(last&&before){const prevInterval=last.pitch-before.pitch;for(let j=2;j<path.history.length;j++){const h=path.history;if(h[j-1].pitch-h[j-2].pitch===prevInterval&&h[j].pitch-h[j-1].pitch===interval&&Math.abs((h[j].start-h[j-1].start)-(t-last.start))<.2){motif=.3;break;}}}
@@ -24,12 +24,23 @@ export function refineMelody(notes:Note[],scale:number[]):Note[]{
  const reverse=last&&before&&!newPhrase&&interval*(last.pitch-before.pitch)<0&&Math.abs(interval)>7&&Math.abs(last.pitch-before.pitch)>7?.3*relief:0;
  const localPenalty=(Math.max(0,Math.abs(n.pitch-n.registerCenter)-5)*.055+Math.max(0,Math.abs(n.pitch-n.registerCenter)-9)*.12+Math.max(0,Math.abs(n.pitch-anchor)-7)*.07)*relief*(early?1.4:1);
  const octaveSwitch=last&&pc(last.pitch)===pc(n.pitch)&&Math.abs(interval)>=12&&!supported?.65:0;
- let lookahead=0;
- for(let k=0;k<future.length;k++){const fit=Math.min(...future[k][1].map(f=>Math.abs(f.pitch-n.pitch)+f.spikePenalty*4));lookahead+=Math.max(-.15,.16-fit*.02)/(k+1);}
- const continuityScore=motif+lookahead-jumpPenalty-reverse-localPenalty-octaveSwitch;
- const duration=n.end-n.start;const reward=.6*Math.min(duration,1.5)+n.confidence*.55-.48-(duration<.15?.25:0)+continuityScore-n.spikePenalty;
- // Exact observed pitch only. Other octaves compete only if present at this onset.
- const selected:Selected={...n,start:t,end:Math.max(t+.0625,Math.round(n.end*16)/16),diagnostic:{previousPitch:last?.pitch??null,interval,localRegister:n.registerCenter,jumpPenalty,spikePenalty:n.spikePenalty,continuityScore,futureSupport:n.futureSupport}};
+ // Score a connected future phrase rather than independent nearest notes.
+ let projected=[{note:n,score:0,depth:0}];
+ for(const [,groupAhead] of future){const expanded=[...projected];for(const p of projected)for(const f of groupAhead){
+  const spacing=f.start-p.note.start;if(spacing<.055||f.start-p.note.end>1.5)continue;
+  const distance=Math.abs(f.pitch-p.note.pitch);const rhythm=last?Math.abs(spacing-(n.start-last.start)):0;
+  const reward=.18+Math.min(f.end-f.start,1)*.1+f.confidence*.08-Math.max(0,distance-5)*.045-f.spikePenalty*.2-Math.min(rhythm,1)*.04;
+  expanded.push({note:f,score:p.score+reward,depth:p.depth+1});
+ }projected=expanded.sort((a,b)=>b.score-a.score).slice(0,12);}
+ const futurePath=projected[0];const lookahead=Math.min(.55,futurePath.score*.35);
+ const coherent=!newPhrase&&Math.abs(interval)<=7&&n.start-last.end<.6&&futurePath.depth>=2;
+ const continuation=coherent?.18:0;
+ const continuityScore=motif+lookahead+continuation-jumpPenalty-reverse-localPenalty-octaveSwitch;
+ const duration=n.end-n.start;
+ const contextualPenalty=n.spikePenalty*(coherent&&n.spikePenalty<2?.65:1);
+ const reward=.5*Math.min(duration,1.5)+n.confidence*.5-.43-(duration<.15?.12:0)+continuityScore-contextualPenalty;
+ // Keep source timing, including short articulated notes and repeated attacks.
+ const selected:Selected={...n,diagnostic:{previousPitch:last?.pitch??null,interval,localRegister:n.registerCenter,jumpPenalty,spikePenalty:contextualPenalty,continuityScore,futureSupport:futurePath.depth}};
  next.push({score:path.score+reward,history:[...path.history.slice(-11),selected],tail:{n:selected,prev:path.tail},anchor:supported&&!early?anchor+(n.pitch-anchor)*.2:anchor,phraseIndex});
  }}
  const seen=new Set<string>();beam=next.sort((a,b)=>b.score-a.score).filter(p=>{const key=`${p.phraseIndex}:${p.anchor?.toFixed(1)}:`+p.history.slice(-4).map(n=>`${n.start}:${n.pitch}`).join('|');if(seen.has(key))return false;seen.add(key);return true;}).slice(0,32);
