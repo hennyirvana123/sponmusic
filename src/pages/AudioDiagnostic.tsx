@@ -10,19 +10,23 @@ export default function AudioDiagnostic(){
  const c=new AbortController();controller.current=c;setBusy(true);setReport(null);setCopyStatus('');
  const json=async(url:string,options:RequestInit={})=>{
  const method=options.method||'GET';let r:Response;
- try{r=await fetch(url,{...options,signal:c.signal});}catch(e){throw Error(`${method} ${url}: ${c.signal.aborted?'Cancelled':e instanceof Error?e.message:String(e)}`);}
+ const endpoint=new URL(url,window.location.origin).href;
+ const headers=new Headers(options.headers);headers.set('x-sponmusic-diagnostic','1');
+ try{r=await fetch(endpoint,{...options,headers,credentials:'same-origin',signal:c.signal});}catch(e){throw Error(`${method} ${endpoint}: ${c.signal.aborted?'Cancelled':`Preview API unreachable: ${e instanceof Error?e.message:String(e)}. No HTTP response was received; verify preview server connectivity.`}`);}
  const text=await r.text();let data;
  try{data=JSON.parse(text);}catch{throw Error(`${method} ${url}: HTTP ${r.status}; non-JSON response: ${text.slice(0,8000)||'(empty)'}`);}
  if(!r.ok)throw Error(`${method} ${url}: HTTP ${r.status}; ${JSON.stringify(data).slice(0,8000)}`);
  if(!data||typeof data!=='object')throw Error(`Invalid response from ${url}`);return data;
  };
  try{
+ setStatus('Checking preview backend configuration…');
+ await json('/api/dev/diagnostic-jobs/connection');
  setStatus('Uploading audio…');
- const job=await json('/api/piano/jobs/submit',{method:'POST',headers:{'Content-Type':/\.wav$/i.test(file.name)?'audio/wav':'audio/mpeg'},body:file});
+ const job=await json('/api/dev/diagnostic-jobs/submit',{method:'POST',headers:{'Content-Type':/\.wav$/i.test(file.name)?'audio/wav':'audio/mpeg'},body:file});
  if(!/^[a-f0-9]{32}$/.test(job.job_id))throw Error('Invalid job ID');
  const deadline=Date.now()+1800000;
  while(Date.now()<deadline){
- const state=await json(`/api/piano/jobs/${job.job_id}`);setStatus(`${job.job_id}: ${state.status}`);
+ const state=await json(`/api/dev/diagnostic-jobs/${job.job_id}`);setStatus(`${job.job_id}: ${state.status}`);
  if(state.status==='failed')throw Error(state.error||'Transcription failed');
  if(state.status==='completed'){
  setStatus('Analyzing transcription and arrangement…');

@@ -1,6 +1,6 @@
 import { defineHandler } from 'nitro';
 import pkg from '@tonejs/midi';
-import { modelUrl } from '../../../../utils/piano-model';
+import { diagnosticModelUrl } from '../../../../utils/dev-diagnostic-connection';
 import { pianoArrangement } from '../../../../utils/piano-arrangement';
 import { arrangementDiagnostic } from '../../../../utils/arrangement-diagnostic';
 const { Midi } = pkg;
@@ -17,7 +17,7 @@ function metrics(notes:N[],end:number){
 export default defineHandler(async event=>{
  if(!import.meta.dev)return new Response(null,{status:404});
  const id=new URL(event.req.url).pathname.split('/').pop()||'';if(!/^[a-f0-9]{32}$/.test(id))return Response.json({message:'Job invalid'},{status:400});
- try{const base=new URL(modelUrl());if(!['https:','http:'].includes(base.protocol)||base.username||base.password||base.search||base.hash)throw Error('URL model invalid');base.pathname=base.pathname.replace(/\/+$/,'').replace(/\/transcribe$/,'')+`/transcribe/${id}/download`;
+ try{const base=diagnosticModelUrl();base.pathname+=`/${id}/download`;
  const response=await fetch(base,{redirect:'error',signal:AbortSignal.timeout(45000)});
  if(!response.ok){
  let detail='(body kosong)';
