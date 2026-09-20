@@ -10,7 +10,7 @@ from basic_pitch.inference import predict
 logger = logging.getLogger('uvicorn.error')
 
 
-def transcribe_chunks(samples, sr, model, directory, bpm):
+def transcribe_chunks(samples, sr, model, directory, bpm, evidence=None):
     # Eight-second ownership regions with one second of context on either side.
     # Inference windows are at most ten seconds; context is not duplicated in output.
     duration = len(samples) / sr
@@ -35,6 +35,8 @@ def transcribe_chunks(samples, sr, model, directory, bpm):
                     start, end = note.start + offset, note.end + offset
                     if not (math.isfinite(start) and math.isfinite(end)):
                         raise ValueError('Non-finite note timing')
+                    if evidence is not None and end > start:
+                        evidence.append({'pitch': note.pitch, 'start': max(0, start), 'end': min(duration, end), 'velocity': note.velocity, 'chunk': index})
                     if end <= core_start or start >= core_end:
                         continue
                     candidates.append((note.pitch, start, end, note.velocity))

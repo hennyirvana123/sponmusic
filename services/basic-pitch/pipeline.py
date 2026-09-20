@@ -4,6 +4,7 @@ import numpy as np
 import soundfile as sf
 import librosa
 from chunked import transcribe_chunks
+from transcription_quality import preprocess, postprocess
 
 
 def process(path, directory, model):
@@ -19,6 +20,7 @@ def process(path, directory, model):
         raise ValueError('Maximum duration is 60 seconds')
     if len(samples) < sr / 4 or not np.isfinite(samples).all() or np.max(np.abs(samples)) < .0001:
         raise ValueError('Audio is too short, silent or invalid')
+    samples = preprocess(samples)
     try:
         tempo, _ = librosa.beat.beat_track(y=samples, sr=sr)
         estimate = float(np.asarray(tempo).reshape(-1)[0])
@@ -27,7 +29,12 @@ def process(path, directory, model):
         bpm = max(40, min(240, estimate))
     except Exception as exc:
         raise ValueError('Tempo/BPM estimation stage failed; no MIDI generated') from exc
-    midi = transcribe_chunks(samples, sr, model, directory, bpm)
+    evidence = []
+    midi = transcribe_chunks(samples, sr, model, directory, bpm, evidence=evidence)
+    try:
+        midi = postprocess(midi, evidence, len(samples) / sr)
+    except Exception as exc:
+        raise ValueError('Transcription post-processing failed; no MIDI returned') from exc
     if not any(t.notes for t in midi.instruments):
         raise ValueError('Basic Pitch detected no notes')
     output = os.path.join(directory, 'transcription.mid')
