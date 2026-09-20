@@ -1,114 +1,144 @@
+import asyncio
 import logging
 import os
-import subprocess
+import shutil
 import tempfile
-import threading
+import time
+import uuid
 from contextlib import asynccontextmanager
-
-import librosa
-import numpy as np
-import soundfile as sf
-from basic_pitch import ICASSP_2022_MODEL_PATH
-from basic_pitch.inference import Model
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
-from chunked import transcribe_chunks
 
 logger = logging.getLogger('uvicorn.error')
-model = None
-lock = threading.Lock()
 
-@asynccontextmanager
-async def lifespan(app):
-    global model
-    try:
-        model = Model(ICASSP_2022_MODEL_PATH)
-        logger.info('Basic Pitch model loaded (inference not yet verified)')
-    except Exception:
-        logger.exception('Basic Pitch model startup failed')
-        raise
-    yield
-    model = None
+def create_app(loader=None, processor=None):
+    if loader is None:
+        def loader():
+            from basic_pitch import ICASSP_2022_MODEL_PATH
+            from basic_pitch.inference import Model
+            return Model(ICASSP_2022_MODEL_PATH)
+    if processor is None:
+        from pipeline import process
+        processor = process
+    jobs = {}
+    queue = asyncio.Queue(maxsize=8)
+    state = {'model': None, 'busy': False}
 
-app = FastAPI(title='SPONMUSIC Basic Pitch', lifespan=lifespan)
+    async def worker():
+        while True:
+            job = await queue.get()
+            if job is None:
+                queue.task_done()
+                return
+            job['status'] = 'processing'
+            state['busy'] = True
+            try:
+                data, bpm = await asyncio.to_thread(processor, job['path'], job['directory'], state['model'])
+                job.update(status='completed', data=data, bpm=bpm)
+            except Exception as exc:
+                logger.exception('Transcription job failed')
+                job.update(status='failed', error=str(exc) if isinstance(exc, (ValueError, RuntimeError)) else 'Audio processing failed; no MIDI generated')
+            finally:
+                shutil.rmtree(job['directory'], ignore_errors=True)
+                job['finished'] = time.monotonic()
+                state['busy'] = False
+                queue.task_done()
 
-@app.get('/health')
-def health():
-    if model is None:
-        raise HTTPException(503, 'Model not loaded')
-    return {'ready': True, 'engine': 'spotify-basic-pitch', 'task': 'transcription', 'busy': lock.locked()}
+    async def reap():
+        while True:
+            await asyncio.sleep(60)
+            now = time.monotonic()
+            for key, job in list(jobs.items()):
+                if job.get('finished') and now - job['finished'] > 1800:
+                    del jobs[key]
 
-@app.post('/transcribe')
-def transcribe(audio: UploadFile = File(...), task: str = Form('transcription')):
-    acquired = False
-    try:
-        if task != 'transcription':
-            raise HTTPException(400, 'Use task=transcription; arrangement runs in SPONMUSIC')
-        if model is None:
+    @asynccontextmanager
+    async def lifespan(app):
+        state['model'] = await asyncio.to_thread(loader)
+        task = asyncio.create_task(worker())
+        cleaner = asyncio.create_task(reap())
+        yield
+        cleaner.cancel()
+        # Do not delete input files while inference is still accessing them.
+        while not queue.empty():
+            job = queue.get_nowait()
+            shutil.rmtree(job['directory'], ignore_errors=True)
+            queue.task_done()
+        await queue.put(None)
+        await task
+        jobs.clear()
+
+    app = FastAPI(title='SPONMUSIC async Basic Pitch', lifespan=lifespan)
+
+    @app.get('/health')
+    async def health():
+        if state['model'] is None:
             raise HTTPException(503, 'Model not loaded')
-        acquired = lock.acquire(blocking=False)
-        if not acquired:
-            raise HTTPException(503, 'Model busy; retry later', headers={'Retry-After': '10'})
-        with tempfile.TemporaryDirectory() as directory:
+        return {'ready': True, 'engine': 'spotify-basic-pitch', 'task': 'transcription', 'busy': state['busy']}
+
+    @app.post('/transcribe', status_code=202, summary='Queue transcription; returns JSON, not MIDI')
+    async def transcribe(audio: UploadFile = File(...), task: str = Form('transcription')):
+        directory = None
+        try:
+            if task != 'transcription':
+                raise HTTPException(400, 'Use task=transcription')
+            if state['model'] is None:
+                raise HTTPException(503, 'Model not loaded')
+            if queue.full() or len(jobs) >= 64:
+                raise HTTPException(429, 'Job capacity reached; retry later')
+            directory = tempfile.mkdtemp(prefix='basic-pitch-')
             path = os.path.join(directory, 'input.audio')
             size = 0
             signature = b''
-            with open(path, 'wb') as target:
-                while chunk := audio.file.read(65536):
+            with open(path, 'wb') as f:
+                while chunk := await audio.read(65536):
                     if not signature:
                         signature = chunk[:12]
                     size += len(chunk)
                     if size > 20_000_000:
                         raise HTTPException(413, 'Audio exceeds 20 MB')
-                    target.write(chunk)
+                    f.write(chunk)
             if not size:
                 raise HTTPException(400, 'Empty audio')
             wav = signature[:4] == b'RIFF' and signature[8:12] == b'WAVE'
             mp3 = signature[:3] == b'ID3' or (len(signature) >= 2 and signature[0] == 255 and signature[1] & 224 == 224)
             if not (wav or mp3):
-                raise HTTPException(415, 'Expected MP3 or WAV content')
-            normalized = os.path.join(directory, 'input.wav')
-            try:
-                subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe', '-i', path, '-t', '61', '-vn', '-ac', '1', '-ar', '22050', '-y', normalized], check=True, capture_output=True, timeout=30)
-                samples, sr = sf.read(normalized, dtype='float32')
-            except subprocess.TimeoutExpired:
-                raise HTTPException(504, 'Audio decoding timed out')
-            except (subprocess.CalledProcessError, RuntimeError):
-                raise HTTPException(415, 'Audio could not be decoded')
-            if len(samples) > sr * 60:
-                raise HTTPException(413, 'Maximum duration is 60 seconds')
-            if len(samples) < sr / 4 or not np.isfinite(samples).all() or np.max(np.abs(samples)) < 0.0001:
-                raise HTTPException(422, 'Audio is too short, silent or invalid')
-            bpm = 120.0
-            try:
-                tempo, _ = librosa.beat.beat_track(y=samples, sr=sr)
-                estimate = float(np.asarray(tempo).reshape(-1)[0])
-                if np.isfinite(estimate) and estimate > 0:
-                    bpm = estimate
-            except Exception:
-                logger.warning('Tempo estimation failed; using 120 BPM grid')
-            bpm = max(40, min(240, bpm))
-            try:
-                midi = transcribe_chunks(samples, sr, model, directory, bpm)
-            except RuntimeError as exc:
-                raise HTTPException(500, str(exc))
-            if not any(track.notes for track in midi.instruments):
-                raise HTTPException(422, 'Basic Pitch detected no notes')
-            output = os.path.join(directory, 'transcription.mid')
-            midi.write(output)
-            with open(output, 'rb') as source:
-                data = source.read(2_000_001)
-            if len(data) > 2_000_000:
-                raise HTTPException(413, 'MIDI exceeds 2 MB')
-            if not data.startswith(b'MThd'):
-                raise HTTPException(500, 'Invalid MIDI output')
-            return Response(data, media_type='audio/midi', headers={'X-Estimated-BPM': str(max(40, min(240, bpm))), 'Content-Disposition': 'attachment; filename="transcription.mid"', 'Cache-Control': 'no-store'})
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception('Transcription request failed')
-        raise HTTPException(500, 'Audio processing failed; no MIDI generated')
-    finally:
-        audio.file.close()
-        if acquired:
-            lock.release()
+                raise HTTPException(415, 'Expected MP3/WAV')
+            if queue.full() or len(jobs) >= 64:
+                raise HTTPException(429, 'Job capacity reached; retry later')
+            key = uuid.uuid4().hex
+            job = {'job_id': key, 'status': 'queued', 'directory': directory, 'path': path}
+            jobs[key] = job
+            queue.put_nowait(job)
+            directory = None
+            return {'job_id': key, 'status': 'queued'}
+        finally:
+            await audio.close()
+            if directory:
+                shutil.rmtree(directory, ignore_errors=True)
+
+    def find(key):
+        job = jobs.get(key)
+        if not job:
+            raise HTTPException(404, 'Job not found, expired, or lost after restart')
+        return job
+
+    @app.get('/transcribe/{job_id}')
+    async def status(job_id: str):
+        job = find(job_id)
+        result = {'job_id': job_id, 'status': job['status']}
+        if job['status'] == 'completed':
+            result['download_url'] = f'/transcribe/{job_id}/download'
+        if job['status'] == 'failed':
+            result['error'] = job['error']
+        return result
+
+    @app.get('/transcribe/{job_id}/download')
+    async def download(job_id: str):
+        job = find(job_id)
+        if job['status'] != 'completed':
+            raise HTTPException(409, 'Job has not completed successfully')
+        return Response(job['data'], media_type='audio/midi', headers={'Content-Disposition': 'attachment; filename="transcription.mid"', 'X-Estimated-BPM': str(job['bpm']), 'Cache-Control': 'no-store'})
+    return app
+
+app = create_app()
