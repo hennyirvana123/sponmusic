@@ -1,34 +1,21 @@
 import pkg from '@tonejs/midi';
-import { cleanNotes, detectKey, extractMelody, optimizeChordProgression, generateChordCandidates } from './piano-arrangement';
-import { filterMelodyCandidates } from './melody-candidates';
-const { Midi }=pkg;
+import { cleanNotes, detectKey, extractMelody, optimizeChordProgression } from './piano-arrangement';
+import { segmentMelodyPhrases, accompanimentPatternPenalty } from './melody-continuity';
+const {Midi}=pkg;
 const names=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 export function arrangementDiagnostic(rawBytes:Uint8Array,finalBytes:Uint8Array){
  const raw=new Midi(rawBytes),final=new Midi(finalBytes);const bpm=final.header.tempos[0]?.bpm||120,beat=60/bpm;
- const rawNotes=raw.tracks.flatMap(t=>t.notes);const cleaned=cleanNotes(rawNotes.map(n=>({pitch:n.midi,start:n.time/beat,end:(n.time+n.duration)/beat,velocity:n.velocity,confidence:0})));
- const key=detectKey(cleaned),selected=extractMelody(cleaned);const total=Math.max(0,...cleaned.map(n=>n.end));const progression=optimizeChordProgression(cleaned,selected,key,total);
- const melody=[...(final.tracks.find(t=>t.name==='Melody · right hand')?.notes||[])].sort((a,b)=>a.time-b.time);
- const accompaniment=final.tracks.find(t=>t.name==='Chord accompaniment')?.notes||[];
- const sequence=melody.map(n=>({pitch:n.midi,name:n.name,onsetSeconds:n.time,durationSeconds:n.duration,velocity:n.velocity}));
- const jumps=melody.slice(1).flatMap((n,i)=>Math.abs(n.midi-melody[i].midi)>=9?[{from:i,to:i+1,atSeconds:n.time,semitones:n.midi-melody[i].midi}]:[]);
- const gaps:{startSeconds:number;endSeconds:number;durationSeconds:number}[]=[];let end=0;
- for(const n of melody){if(n.time-end>=Math.max(.5,beat))gaps.push({startSeconds:end,endSeconds:n.time,durationSeconds:n.time-end});end=Math.max(end,n.time+n.duration);}if(raw.duration-end>=Math.max(.5,beat))gaps.push({startSeconds:end,endSeconds:raw.duration,durationSeconds:raw.duration-end});
- const chordName=(c:typeof progression[number]['chord'])=>{if(!c)return null;const ints=c.pcs.map(p=>(p-c.root+12)%12);return names[c.root]+(ints.includes(6)?'dim':ints.includes(3)?'m':'');};
- const melodyCandidates=filterMelodyCandidates(cleaned);
- const matched=new Set<number>();
- for(const n of melody){const matches=melodyCandidates.map((c,i)=>({c,i})).filter(({c,i})=>!matched.has(i)&&c.pitch===n.midi&&Math.abs(c.start-n.time/beat)<.14).sort((a,b)=>Math.abs(a.c.start-n.time/beat)-Math.abs(b.c.start-n.time/beat));if(matches.length)matched.add(matches[0].i);}
- const rejected=melodyCandidates.filter((_,i)=>!matched.has(i));
- const rejectionReasons:Record<string,number>={};for(const c of rejected)for(const reason of c.rejectionReasons.length?c.rejectionReasons:['sequence-selection-or-articulation'])rejectionReasons[reason]=(rejectionReasons[reason]||0)+1;
- const phrases:{startTime:number;endTime:number;pitches:number[];numberOfNotes:number}[]=[];
- for(const n of melody){let phrase=phrases[phrases.length-1];if(!phrase||n.time-phrase.endTime>=1.5*beat){phrase={startTime:n.time,endTime:n.time+n.duration,pitches:[],numberOfNotes:0};phrases.push(phrase);}phrase.endTime=Math.max(phrase.endTime,n.time+n.duration);phrase.pitches.push(n.midi);phrase.numberOfNotes++;}
- const phraseMetrics={selectedMelodyNoteCount:melody.length,candidateCount:melodyCandidates.length,rejectedCount:rejected.length,largeJumps:jumps.length,shortMelodyNotes:melody.filter(n=>n.duration<.08).length,phraseSegments:phrases.length,averagePhraseLengthSeconds:phrases.length?phrases.reduce((sum,p)=>sum+p.endTime-p.startTime,0)/phrases.length:0,phraseExamples:phrases.slice(0,8),selectedCandidateMeanConfidence:matched.size?[...matched].reduce((sum,i)=>sum+melodyCandidates[i].confidence,0)/matched.size:null,pathScore:null,scoreNote:'Candidate confidence is not a calibrated probability or total beam score. Rejection labels are heuristic; labels can overlap.'};
- const bars=progression.map((bar,i)=>{const candidates=generateChordCandidates(cleaned,selected,key,bar.start,bar.end).sort((a,b)=>b.score-a.score);const margin=candidates.length>1?candidates[0].score-candidates[1].score:null;
- const selectedChordRank=bar.chord?candidates.findIndex(c=>c.root===bar.chord!.root&&c.pcs.join(',')===bar.chord!.pcs.join(','))+1:null;
- const start=bar.start*beat,stop=bar.end*beat;const inBar=(n:{time:number;duration:number})=>n.time<stop&&n.time+n.duration>start;
- const m=melody.filter(inBar),a=accompaniment.filter(inBar);const conflicts=a.flatMap(n=>m.filter(x=>x.time<n.time+n.duration&&x.time+x.duration>n.time&&Math.abs(x.midi-n.midi)<=2).map(x=>({melodyPitch:x.midi,accompanimentPitch:n.midi,startSeconds:Math.max(x.time,n.time),endSeconds:Math.min(x.time+x.duration,n.time+n.duration)})));
- const all=[...m,...a];const times=[start,...all.map(n=>Math.max(start,n.time))];const peak=Math.max(0,...times.map(t=>all.filter(n=>n.time<=t&&n.time+n.duration>t).length));
- // Included in each ranked candidate for compatibility with the existing report shape.
- const rankedDetails={...phraseMetrics,selectedChordRank,melodyCandidateCount:melodyCandidates.length,rejectedMelodyCount:rejected.length,rejectionReasons,finalMelodyPitchRange:melody.length?[Math.min(...melody.map(n=>n.midi)),Math.max(...melody.map(n=>n.midi))]:null};
- return {...rankedDetails,bar:i+1,startSeconds:start,endSeconds:stop,chord:chordName(bar.chord),root:bar.chord?names[bar.chord.root]:null,selectedScore:bar.chord?.score??null,topCandidateMargin:margin,weak:!bar.chord||bar.chord.score<.25,ambiguous:margin!==null&&margin<.15,alternatives:candidates.slice(0,3).map(c=>({chord:chordName(c),score:c.score})),conflicts,melodyOnsets:m.filter(n=>n.time>=start).length,accompanimentOnsets:a.filter(n=>n.time>=start).length,peakSimultaneous:peak,dense:peak>5||all.filter(n=>n.time>=start).length>16};});
- return {durationSeconds:final.duration,transcriptionDurationSeconds:raw.duration,bpm,totalTranscriptionNotes:rawNotes.length,melodyNotes:melody.length,accompanimentNotes:accompaniment.length,key:{name:names[key.root]+(key.minor?' minor':' major'),confidence:key.confidence},melodySequence:sequence,jumps,shortNotes:{thresholdSeconds:.08,transcription:rawNotes.filter(n=>n.duration<.08).map(n=>({pitch:n.midi,onsetSeconds:n.time,durationSeconds:n.duration})),finalMelody:sequence.filter(n=>n.durationSeconds<.08)},largeGaps:gaps,bars,diagnosis:{rootCause:'UNDETERMINED',candidates:[...(jumps.length||gaps.length?['B: melody extraction/continuity warrants comparison']:[]),...(bars.some(b=>b.weak||b.ambiguous)?['C: weak/ambiguous harmony evidence']:[]),...(bars.some(b=>b.conflicts.length||b.dense)?['D: accompaniment collision/density']:[])],limitations:'These flags do not prove errors. A requires reference audio/annotated melody; polyphonic transcription intervals cannot establish ground truth. Chord scores are heuristic, not probabilities. E cannot be concluded from flags alone. Short notes and rests may be intentional.'}};
+ const cleaned=cleanNotes(raw.tracks.flatMap(t=>t.notes).map(n=>({pitch:n.midi,start:n.time/beat,end:(n.time+n.duration)/beat,velocity:n.velocity,confidence:0})));
+ const key=detectKey(cleaned),selected=extractMelody(cleaned);const bars=optimizeChordProgression(cleaned,selected,key,Math.max(0,...cleaned.map(n=>n.end)));
+ const melody=final.tracks.find(t=>t.name==='Melody · right hand')?.notes||[],chords=final.tracks.find(t=>t.name==='Chord accompaniment')?.notes||[];
+ const notes=melody.map(n=>({pitch:n.midi,start:n.time/beat,end:(n.time+n.duration)/beat,velocity:n.velocity,confidence:cleaned.find(c=>c.pitch===n.midi&&Math.abs(c.start-n.time/beat)<.03)?.confidence??0})).sort((a,b)=>a.start-b.start);
+ const phrases=segmentMelodyPhrases(notes);
+ return {phraseCount:phrases.length,selectedMelodyNoteCount:notes.length,finalMelodyPitchRange:notes.length?[Math.min(...notes.map(n=>n.pitch)),Math.max(...notes.map(n=>n.pitch))]:null,
+ largeJumpCount:notes.slice(1).filter((n,i)=>Math.abs(n.pitch-notes[i].pitch)>=9).length,shortNoteCount:melody.filter(n=>n.duration<.08).length,
+ accompanimentPatternPenaltyCount:notes.filter((n,i)=>accompanimentPatternPenalty(notes.slice(Math.max(0,i-7),i),n,cleaned)>.2).length,
+ melodyAccompanimentConflictCount:chords.filter(c=>melody.some(m=>m.time<c.time+c.duration&&c.time<m.time+m.duration&&Math.abs(m.midi-c.midi)<=2)).length,
+ averageSelectedCandidateConfidence:notes.length?notes.reduce((s,n)=>s+n.confidence,0)/notes.length:0,first20SelectedMelodyPitches:notes.slice(0,20).map(n=>n.pitch),
+ phrases:phrases.map(p=>({startSeconds:p.start*beat,endSeconds:p.end*beat,noteCount:p.notes.length,representativeNotes:Array.from({length:Math.min(10,p.notes.length)},(_,i)=>p.notes[Math.floor(i*(p.notes.length-1)/Math.max(1,Math.min(10,p.notes.length)-1))]).map(n=>({pitch:n.pitch,startSeconds:n.start*beat,durationSeconds:(n.end-n.start)*beat}))})),
+ selectedChordProgression:bars.map((b,i)=>({bar:i+1,chord:b.chord?names[b.chord.root]+(b.chord.pcs.includes((b.chord.root+3)%12)?'m':''):null})),
+ caveat:'Phrase boundaries and accompaniment flags are heuristics, not verified vocal annotations. Confidence is not a calibrated probability. No ground-truth song recognition was performed.'};
 }
