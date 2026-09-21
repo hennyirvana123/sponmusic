@@ -18,7 +18,13 @@ WORKDIR /app
 
 COPY services/piano-faithful/requirements.txt ./
 
-RUN pip install --no-cache-dir -r requirements.txt && pip check
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.1.2
+
+RUN pip install --no-cache-dir \
+    -r requirements.txt \
+    && pip check
 
 COPY services/piano-faithful/app.py \
      services/piano-faithful/piano_amt.py \
