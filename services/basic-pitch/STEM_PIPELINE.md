@@ -4,7 +4,18 @@ Source changes only; Docker build, remote health, inference, resource use and li
 
 ## Deployment
 
-Rebuild the Basic Pitch service using its Dockerfile. Keep BASIC_PITCH_URL pointing to that service. Set SOURCE_SEPARATION_URL on the Basic Pitch service to the separate Demucs service origin (the user supplied https://spontion.blitz.cloud/; its identity/readiness has NOT been checked here). Do not set this variable on the browser. Leaving it unset preserves full-mix transcription. When configured, separation failures are reported, not silently replaced by full-mix transcription.
+Rebuild the Basic Pitch service using its Dockerfile. Keep BASIC_PITCH_URL pointing to that service. Set SOURCE_SEPARATION_URL on the Basic Pitch service to the actual separate Demucs service origin assigned by the deployment platform, WITHOUT /separate or /diagnostics. The actual hostname is not yet known. https://spontion.blitz.cloud/ is the main SponMusic application, NOT the Demucs service; do not use it here. Do not set this variable on the browser. Leaving it unset preserves full-mix transcription. When configured, separation failures are reported, not silently replaced by full-mix transcription.
+
+### HTTP contract (verified against source, not runtime)
+
+- GET /health: liveness and model readiness.
+- GET /diagnostics: client requires engine=demucs, model=htdemucs and modelAvailable=true before upload.
+- POST /separate: multipart/form-data with file field audio; MP3/WAV, maximum 20 MB, decoded duration 0.25–60 seconds. Returns HTTP 202 JSON with job_id and status=queued, not audio or a download URL.
+- GET /separate/{job_id}: poll queued/processing/completed/failed.
+- GET /separate/{job_id}/{stem}: download audio/wav after completion; stem is vocals, instrumental or original.
+- GET /separate/{job_id}/download/{stem}: equivalent download alias.
+
+The Basic Pitch client sends its decoded WAV using the audio multipart field, then polls and downloads vocals/instrumental using the first download route above. It never requests the base homepage. No API authentication is implemented by either service or this client. If a deployment gateway requires authentication, the current client cannot access it without a separate integration change. Prefer private service networking where supported; do not expose an unprotected inference endpoint publicly without gateway limits.
 
 No new Python packages. CPU pYIN uses existing librosa; Demucs runs in the separate existing service. Single transcription worker processes queued jobs sequentially. Do not run multiple Uvicorn workers with the in-memory queue.
 
