@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir \
     "soundfile>=0.12,<1" \
     "fastapi>=0.115,<1" \
     "uvicorn>=0.30,<1" \
-    "python-multipart>=0.18,<1" \
+    "python-multipart>=0.0.18,<1"
     && pip check
 
 COPY services/source-separation/app.py ./
