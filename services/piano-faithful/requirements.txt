@@ -1,4 +1,4 @@
-piano-transcription-inference==0.0.5
+piano-transcription-inference==0.0.6
 torch==2.1.2
 numpy==1.23.5
 librosa==0.9.2
