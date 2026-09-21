@@ -85,22 +85,29 @@ async def cleanup():
                 jobs.pop(key, None)
 
 
-@asynccontextmanager
-async def lifespan(app):
+async def load_model():
     global model, model_error
     try:
-        model = await asyncio.to_thread(get_model, 'htdemucs')
-        model.eval()
+        loaded = await asyncio.to_thread(get_model, 'htdemucs')
+        loaded.eval()
+        model = loaded
         model_error = None
+        log.info('Demucs htdemucs model ready')
     except Exception as exc:
         model = None
         model_error = 'RESOURCE_FAILURE' if isinstance(exc, (MemoryError, torch.cuda.OutOfMemoryError)) else 'MODEL_LOAD_FAILED'
         log.exception('Demucs model load failed')
+
+
+@asynccontextmanager
+async def lifespan(app):
+    loader = asyncio.create_task(load_model())
     task = asyncio.create_task(worker())
     cleaner = asyncio.create_task(cleanup())
     try:
         yield
     finally:
+        await loader
         # Wait for active inference before deleting its working files.
         await queue.join()
         task.cancel()
@@ -116,12 +123,16 @@ app = FastAPI(title='SPONMUSIC source separation', lifespan=lifespan)
 
 @app.get('/health')
 async def health():
-    return {'ready': model is not None, 'busy': busy, 'model': 'htdemucs'}
+    return {'alive': True, 'ready': model is not None, 'busy': busy,
+            'engine': 'demucs', 'model': 'htdemucs',
+            'modelStatus': 'ready' if model is not None else ('failed' if model_error else 'loading')}
 
 @app.get('/diagnostics')
 async def diagnostics():
     from importlib.metadata import version
     return {'engine': 'demucs', 'model': 'htdemucs', 'version': version('demucs'),
+            'ready': model is not None,
+            'modelStatus': 'ready' if model is not None else ('failed' if model_error else 'loading'),
             'busy': busy, 'modelAvailable': model is not None, 'errorCode': model_error,
             'sources': list(model.sources) if model is not None else [],
             'limits': {'maxBytes': 20_000_000, 'maxSeconds': 60, 'queueSize': 4},
@@ -165,6 +176,7 @@ async def status(job_id: str):
         raise HTTPException(404, 'Job unavailable or expired')
     return {k: v for k, v in job.items() if k not in ('folder', 'finished')}
 
+@app.get('/separate/{job_id}/download/{stem}')
 @app.get('/separate/{job_id}/{stem}')
 async def download(job_id: str, stem: str):
     if stem not in ('vocals', 'instrumental', 'original'):
