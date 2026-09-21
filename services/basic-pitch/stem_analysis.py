@@ -20,6 +20,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def fetch_stems(path, directory, base):
+    from runtime_debug import update
+    update(stage='demucs_diagnostics')
     parsed = urlsplit(base)
     if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError('Invalid SOURCE_SEPARATION_URL')
@@ -58,8 +60,11 @@ def fetch_stems(path, directory, base):
     key = job.get('job_id', '')
     if len(key) != 32 or any(c not in '0123456789abcdef' for c in key):
         raise ValueError('Invalid separation job ID')
+    update(stage='separation', separation_job_id=key)
     while True:
         state = json.loads(request('/separate/' + key))
+        if state.get('status') in ('queued', 'processing', 'completed', 'failed'):
+            update(separation_status=state['status'])
         if state.get('status') == 'completed':
             break
         if state.get('status') == 'failed':
@@ -77,6 +82,7 @@ def fetch_stems(path, directory, base):
         if not len(samples) or not np.isfinite(samples).all() or len(samples) > sr * 60.1:
             raise ValueError('Invalid separated audio')
         stems[name] = librosa.resample(samples.mean(axis=1), orig_sr=sr, target_sr=22050)
+        update(stage='stem_download', **{name + '_downloaded': True})
     log.info('Demucs htdemucs job completed; decoded vocal and non-vocal stems')
     return stems
 

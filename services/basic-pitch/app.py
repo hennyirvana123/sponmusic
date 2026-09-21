@@ -35,12 +35,19 @@ def create_app(loader=None, processor=None):
                 else:
                     future.set_result(result)
         def run():
+            from runtime_debug import current, initial, update
+            record = initial(job['job_id'])
+            job['diagnostics'] = record
+            token = current.set(record)
             result, error = None, None
             try:
                 result = processor(job['path'], job['directory'], state['model'])
+                update(stage='completed')
             except Exception as exc:
+                update(failed_stage=record.get('stage'), stage='failed', error_type=type(exc).__name__)
                 error = exc
             finally:
+                current.reset(token)
                 shutil.rmtree(job['directory'], ignore_errors=True)
             try:
                 loop.call_soon_threadsafe(deliver, result, error)
@@ -112,6 +119,11 @@ def create_app(loader=None, processor=None):
 
     app = FastAPI(title='SPONMUSIC async Basic Pitch', lifespan=lifespan)
 
+    @app.get('/diagnostics')
+    async def runtime_diagnostics():
+        from runtime_debug import diagnostics
+        return await asyncio.to_thread(diagnostics, state['model'] is not None and not state['stopping'])
+
     @app.get('/health')
     async def health():
         if state['model'] is None:
@@ -167,8 +179,9 @@ def create_app(loader=None, processor=None):
 
     @app.get('/transcribe/{job_id}')
     async def status(job_id: str):
+        from runtime_debug import initial
         job = find(job_id)
-        result = {'job_id': job_id, 'status': job['status']}
+        result = {'job_id': job_id, 'status': job['status'], 'diagnostics': dict(job.get('diagnostics', initial(job_id)))}
         if job['status'] == 'completed':
             result['download_url'] = f'/transcribe/{job_id}/download'
         if job['status'] == 'failed':

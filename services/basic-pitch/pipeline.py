@@ -5,9 +5,11 @@ import soundfile as sf
 import librosa
 from chunked import transcribe_chunks
 from transcription_quality import preprocess, postprocess
+from runtime_debug import update
 
 
 def process(path, directory, model):
+    update(stage='decode', separation_enabled=bool(os.environ.get('SOURCE_SEPARATION_URL', '').strip()))
     normalized = os.path.join(directory, 'input.wav')
     try:
         subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe', '-i', path, '-t', '61', '-vn', '-ac', '1', '-ar', '22050', '-y', normalized], check=True, capture_output=True, timeout=30)
@@ -39,11 +41,14 @@ def process(path, directory, model):
                 raise ValueError('Separation output duration does not match input')
     evidence = []
     analysis_audio = preprocess(stems['instrumental']) if stems is not None else samples
+    update(stage='basic_pitch', used_full_mix_fallback=stems is None)
     midi = transcribe_chunks(analysis_audio, sr, model, directory, bpm, evidence=evidence)
+    update(basic_pitch_raw_note_count=sum(len(t.notes) for t in midi.instruments), stage='postprocess')
     try:
         midi = postprocess(midi, evidence, len(samples) / sr)
     except Exception as exc:
         raise ValueError('Transcription post-processing failed; no MIDI returned') from exc
+    update(instrumental_note_count=sum(len(t.notes) for t in midi.instruments) if stems is not None else None)
     if stems is not None:
         from stem_analysis import vocal_melody
         import pretty_midi
@@ -52,10 +57,13 @@ def process(path, directory, model):
         for track in midi.instruments:
             for note in track.notes:
                 (bass if note.pitch < 48 else harmony).notes.append(note)
+        update(stage='pyin')
         lead = vocal_melody(stems['vocals'], bpm)
+        update(vocal_note_count=len(lead.notes))
         midi.instruments = [track for track in (lead, harmony, bass) if track.notes]
     if not any(t.notes for t in midi.instruments):
         raise ValueError('Basic Pitch detected no notes')
+    update(stage='midi_write', transcription_note_count=sum(len(t.notes) for t in midi.instruments))
     output = os.path.join(directory, 'transcription.mid')
     try:
         midi.write(output)
