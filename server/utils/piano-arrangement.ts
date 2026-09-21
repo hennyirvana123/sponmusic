@@ -127,7 +127,11 @@ export function pianoArrangement(bytes:Uint8Array,estimatedBpm?:number):Uint8Arr
  const source=new Midi(bytes);const bpm=estimatedBpm??source.header.tempos[0]?.bpm??120;if(!Number.isFinite(bpm)||bpm<40||bpm>240)throw Error('Invalid tempo');
  const beat=60/bpm;const input=source.tracks.flatMap(t=>t.notes.map(n=>({pitch:n.midi,start:n.time/beat,end:(n.time+n.duration)/beat,velocity:n.velocity,confidence:0})));
  if(!input.length||input.length>30000||input.some(n=>!Number.isFinite(n.start)||!Number.isFinite(n.end)||n.start<0||n.end<=n.start||n.end>1024||!Number.isFinite(n.velocity)||!Number.isInteger(n.pitch)||n.pitch<0||n.pitch>127))throw Error('Invalid or oversized transcription');
- const cleaned=cleanNotes(input);if(!cleaned.length)throw Error('No reliable notes after cleanup');const key=detectKey(cleaned);const melody=extractMelody(cleaned);if(!melody.length)throw Error('No reliable melody; arrangement not generated');
- const total=Math.max(...cleaned.map(n=>n.end));const bars=optimizeChordProgression(cleaned,melody,key,total);const chords=balladAccompaniment(bars,melody,bpm);const tracks=validateArrangement(melody,chords);
+ const cleaned=cleanNotes(input);if(!cleaned.length)throw Error('No reliable notes after cleanup');const key=detectKey(cleaned);
+ const vocal=source.tracks.filter(t=>t.name==='Separated vocal melody').flatMap(t=>t.notes.map(n=>({pitch:n.midi,start:n.time/beat,end:(n.time+n.duration)/beat,velocity:n.velocity,confidence:1})));
+ const melody=vocal.length?cleanNotes(vocal):extractMelody(cleaned);if(!melody.length)throw Error('No reliable melody; arrangement not generated');
+ const instrumental=source.tracks.filter(t=>t.name.startsWith('Separated instrumental')).flatMap(t=>t.notes.map(n=>({pitch:n.midi,start:n.time/beat,end:(n.time+n.duration)/beat,velocity:n.velocity,confidence:0})));
+ const harmony=instrumental.length?cleanNotes(instrumental):cleaned;
+ const total=Math.max(...cleaned.map(n=>n.end));const bars=optimizeChordProgression(harmony,melody,key,total);const chords=balladAccompaniment(bars,melody,bpm);const tracks=validateArrangement(melody,chords);
  const midi=new Midi();midi.header.setTempo(bpm);['Melody · right hand','Chord accompaniment'].forEach((name,i)=>{const track=midi.addTrack();track.name=name;track.instrument.number=0;for(const n of tracks[i])track.addNote({midi:n.pitch,time:n.start*beat,duration:(n.end-n.start)*beat,velocity:Math.max(.1,Math.min(.9,i===0?Math.max(.58,n.velocity):n.velocity))});});return midi.toArray();
 }

@@ -29,12 +29,31 @@ def process(path, directory, model):
         bpm = max(40, min(240, estimate))
     except Exception as exc:
         raise ValueError('Tempo/BPM estimation stage failed; no MIDI generated') from exc
+    separation_url = os.environ.get('SOURCE_SEPARATION_URL', '').strip()
+    stems = None
+    if separation_url:
+        from stem_analysis import fetch_stems
+        stems = fetch_stems(normalized, directory, separation_url)
+        for stem in stems.values():
+            if abs(len(stem) - len(samples)) > sr * .1:
+                raise ValueError('Separation output duration does not match input')
     evidence = []
-    midi = transcribe_chunks(samples, sr, model, directory, bpm, evidence=evidence)
+    analysis_audio = preprocess(stems['instrumental']) if stems is not None else samples
+    midi = transcribe_chunks(analysis_audio, sr, model, directory, bpm, evidence=evidence)
     try:
         midi = postprocess(midi, evidence, len(samples) / sr)
     except Exception as exc:
         raise ValueError('Transcription post-processing failed; no MIDI returned') from exc
+    if stems is not None:
+        from stem_analysis import vocal_melody
+        import pretty_midi
+        harmony = pretty_midi.Instrument(program=0, name='Separated instrumental harmony')
+        bass = pretty_midi.Instrument(program=0, name='Separated instrumental bass candidates')
+        for track in midi.instruments:
+            for note in track.notes:
+                (bass if note.pitch < 48 else harmony).notes.append(note)
+        lead = vocal_melody(stems['vocals'], bpm)
+        midi.instruments = [track for track in (lead, harmony, bass) if track.notes]
     if not any(t.notes for t in midi.instruments):
         raise ValueError('Basic Pitch detected no notes')
     output = os.path.join(directory, 'transcription.mid')
