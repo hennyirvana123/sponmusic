@@ -24,12 +24,12 @@ RUN pip install --no-cache-dir \
     torchaudio==2.1.2+cpu
 
 RUN pip install --no-cache-dir \
-    demucs==4.0.1 \
-    numpy>=1.23,<2 \
-    soundfile>=0.12,<1 \
-    fastapi>=0.115,<1 \
-    uvicorn>=0.30,<1 \
-    python-multipart>=0.0.18,<1 \
+    "demucs==4.0.1" \
+    "numpy>=1.23,<2" \
+    "soundfile>=0.12,<1" \
+    "fastapi>=0.115,<1" \
+    "uvicorn>=0.30,<1" \
+    "python-multipart>=0.18,<1" \
     && pip check
 
 COPY services/source-separation/app.py ./
