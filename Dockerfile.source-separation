@@ -1,11 +1,44 @@
 FROM python:3.10-slim-bookworm
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOST=0.0.0.0 PORT=8000 SEPARATION_DEVICE=cpu TORCH_HOME=/home/worker/.cache/torch
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfile1 libgomp1 && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOST=0.0.0.0 \
+    PORT=8000 \
+    SEPARATION_DEVICE=cpu \
+    TORCH_HOME=/home/worker/.cache/torch
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
+
 COPY services/source-separation/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt && pip check
+
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.1.2 \
+    torchaudio==2.1.2
+
+RUN pip install --no-cache-dir \
+    demucs==4.0.1 \
+    numpy>=1.23,<2 \
+    soundfile>=0.12,<1 \
+    fastapi>=0.115,<1 \
+    uvicorn>=0.30,<1 \
+    python-multipart>=0.0.18,<1 \
+    && pip check
+
 COPY services/source-separation/app.py ./
-RUN useradd --create-home worker && mkdir -p /home/worker/.cache/torch && chown -R worker:worker /home/worker/.cache
+
+RUN useradd --create-home worker \
+    && mkdir -p /home/worker/.cache/torch \
+    && chown -R worker:worker /home/worker/.cache
+
 USER worker
+
 EXPOSE 8000
+
 CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
