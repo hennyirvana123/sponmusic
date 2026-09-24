@@ -11,7 +11,7 @@ runtime:
 runs-on: ubuntu-22.04
 timeout-minutes: 90
 
-
+```
 steps:
   - name: Checkout
     uses: actions/checkout@v4
@@ -56,7 +56,7 @@ steps:
       assert h["engine"] == "mt3-infer"
       assert h["model"] == "yourmt3"
       assert h["device"] == "cpu"
-      '
+          '
 
           exit 0
         fi
@@ -95,7 +95,7 @@ steps:
       print("mt3-infer", version("mt3-infer"))
       print("torch", torch.__version__)
       print("torchaudio", torchaudio.__version__)
-      ' \
+        ' \
         2>&1 | tee runtime-report/imports.log
 
   - name: Contract test
@@ -152,7 +152,7 @@ steps:
       )
 
       print("Separate download timing unavailable")
-      ' \
+        ' \
         2>&1 | tee runtime-report/model.log
 
   - name: Real inference
@@ -542,3 +542,4 @@ steps:
       name: ai-transcribe-v2-runtime-report
       path: runtime-report/
       retention-days: 7
+```
