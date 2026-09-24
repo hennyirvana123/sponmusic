@@ -11,7 +11,7 @@ runtime:
 runs-on: ubuntu-22.04
 timeout-minutes: 90
 
-```
+
 steps:
   - name: Checkout
     uses: actions/checkout@v4
@@ -542,4 +542,3 @@ steps:
       name: ai-transcribe-v2-runtime-report
       path: runtime-report/
       retention-days: 7
-```
