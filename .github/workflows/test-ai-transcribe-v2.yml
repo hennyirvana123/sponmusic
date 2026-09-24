@@ -1,7 +1,7 @@
 name: AI Transcribe V2 runtime verification
 
-on:
-  workflow_dispatch:
+"on":
+  workflow_dispatch: {}
 
 permissions:
   contents: read
