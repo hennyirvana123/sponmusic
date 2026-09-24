@@ -1,9 +1,8 @@
-<dyad-read path=".github/workflows/test-ai-transcribe-v2.yml"></dyad-read>
 ````yaml
 name: AI Transcribe V2 runtime verification
 
-on:
-  workflow_dispatch:
+"on":
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -28,180 +27,522 @@ jobs:
           started = time.monotonic()
           container = 'sponmusic-ai-transcribe-v2'
           active = None
+
           def save():
               report['metrics']['total_test_seconds'] = time.monotonic() - started
               (out / 'report.json').write_text(json.dumps(report, indent=2))
+
           def command(args, timeout=1800):
               print('+', ' '.join(args), flush=True)
-              result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
+              result = subprocess.run(
+                  args,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  text=True,
+                  timeout=timeout
+              )
               print(result.stdout, flush=True)
               with (out / 'execution.log').open('a') as f:
                   f.write('+ ' + ' '.join(args) + '\n' + result.stdout + '\n')
               if result.returncode:
-                  raise RuntimeError(f'Command exited {result.returncode}\n{result.stdout}')
+                  raise RuntimeError(
+                      f'Command exited {result.returncode}\n{result.stdout}'
+                  )
               return result.stdout
+
           def inside(code, timeout=1800):
-              return command(['docker', 'exec', container, 'python', '-c', code], timeout)
+              return command(
+                  ['docker', 'exec', container, 'python', '-c', code],
+                  timeout
+              )
+
           def stage(name):
               global active
               active = name
               save()
+
           def passed(name):
               report['checks'][name] = 'PASS'
               save()
+
           def get(path):
-              with urllib.request.urlopen('http://127.0.0.1:8000' + path, timeout=20) as r:
+              with urllib.request.urlopen(
+                  'http://127.0.0.1:8000' + path,
+                  timeout=20
+              ) as r:
                   return json.load(r)
+
           try:
               stage('BUILD')
               t = time.monotonic()
-              command(['docker', 'build', '--progress=plain', '-t', container, '-f', 'services/ai-transcribe-v2/Dockerfile', 'services/ai-transcribe-v2'], 2400)
+
+              command([
+                  'docker',
+                  'build',
+                  '--progress=plain',
+                  '-t',
+                  container,
+                  '-f',
+                  'services/ai-transcribe-v2/Dockerfile',
+                  'services/ai-transcribe-v2'
+              ], 2400)
+
               report['metrics']['docker_build_seconds'] = time.monotonic() - t
               passed('BUILD')
-              # Fresh volume: first-use checkpoint observation must not reuse an old cache.
+
               command(['docker', 'volume', 'create', 'mt3-checkpoints'])
-              command(['docker', 'run', '-d', '--name', container, '-p', '8000:8000', '-v', 'mt3-checkpoints:/models/mt3', container])
+
+              command([
+                  'docker',
+                  'run',
+                  '-d',
+                  '--name',
+                  container,
+                  '-p',
+                  '8000:8000',
+                  '-v',
+                  'mt3-checkpoints:/models/mt3',
+                  container
+              ])
+
               stage('HEALTH')
+
               deadline = time.monotonic() + 180
               last_error = None
+
               while time.monotonic() < deadline:
                   try:
                       health = get('/health')
-                      if health.get('alive') is not True or health.get('engine') != 'mt3-infer' or health.get('model') != 'yourmt3' or health.get('device') != 'cpu':
-                          raise RuntimeError(f'Unexpected health response: {health}')
+
+                      if (
+                          health.get('alive') is not True
+                          or health.get('engine') != 'mt3-infer'
+                          or health.get('model') != 'yourmt3'
+                          or health.get('device') != 'cpu'
+                      ):
+                          raise RuntimeError(
+                              f'Unexpected health response: {health}'
+                          )
+
                       break
+
                   except Exception as exc:
                       last_error = exc
                       time.sleep(3)
+
               else:
-                  raise RuntimeError(f'Health unavailable after 180s: {last_error}')
+                  raise RuntimeError(
+                      f'Health unavailable after 180s: {last_error}'
+                  )
+
               print(json.dumps(health, indent=2), flush=True)
-              (out / 'health.json').write_text(json.dumps(health, indent=2))
+
+              (out / 'health.json').write_text(
+                  json.dumps(health, indent=2)
+              )
+
               passed('HEALTH')
+
               stage('PIP CHECK')
-              command(['docker', 'exec', container, 'python', '-m', 'pip', 'check'])
+
+              command([
+                  'docker',
+                  'exec',
+                  container,
+                  'python',
+                  '-m',
+                  'pip',
+                  'check'
+              ])
+
               passed('PIP CHECK')
+
               stage('IMPORT')
-              text = inside("import sys,json,mt3_infer,torch,torchaudio; from mt3_infer import transcribe,load_model; from mt3_infer.utils.audio import load_audio; from importlib.metadata import version; print('VERSIONS='+json.dumps({'Python':sys.version,'mt3-infer':version('mt3-infer'),'torch':torch.__version__,'torchaudio':torchaudio.__version__}))")
-              report['versions'] = json.loads(next(x[9:] for x in text.splitlines() if x.startswith('VERSIONS=')))
+
+              text = inside(
+                  "import sys,json,mt3_infer,torch,torchaudio; "
+                  "from mt3_infer import transcribe,load_model; "
+                  "from mt3_infer.utils.audio import load_audio; "
+                  "from importlib.metadata import version; "
+                  "print('VERSIONS='+json.dumps({"
+                  "'Python':sys.version,"
+                  "'mt3-infer':version('mt3-infer'),"
+                  "'torch':torch.__version__,"
+                  "'torchaudio':torchaudio.__version__"
+                  "}))"
+              )
+
+              report['versions'] = json.loads(
+                  next(
+                      x[9:]
+                      for x in text.splitlines()
+                      if x.startswith('VERSIONS=')
+                  )
+              )
+
               passed('IMPORT')
+
               stage('CONTRACT TEST')
-              # Read-only checkout mount enables the existing production-file integrity test.
-              # Running the copied /app test alone would omit production tree checks.
-              command(['docker', 'run', '--rm', '-e', 'MT3_DEVICE=cpu', '-e', 'PYTHONDONTWRITEBYTECODE=1', '-v', os.getcwd() + ':/repo:ro', '-w', '/repo', container, 'python', 'services/ai-transcribe-v2/test_contract.py'])
+
+              command([
+                  'docker',
+                  'run',
+                  '--rm',
+                  '-e',
+                  'MT3_DEVICE=cpu',
+                  '-e',
+                  'PYTHONDONTWRITEBYTECODE=1',
+                  '-v',
+                  os.getcwd() + ':/repo:ro',
+                  '-w',
+                  '/repo',
+                  container,
+                  'python',
+                  'services/ai-transcribe-v2/test_contract.py'
+              ])
+
               passed('CONTRACT TEST')
+
               stage('MODEL LOAD')
+
               text = inside("""
           import json,os,time
           from pathlib import Path
           from mt3_infer import load_model
+
           root=Path(os.environ['MT3_CHECKPOINT_DIR'])
-          before={str(p) for p in root.rglob('*') if p.is_file()}
+
+          before={
+              str(p)
+              for p in root.rglob('*')
+              if p.is_file()
+          }
+
           t=time.monotonic()
-          model=load_model('yourmt3',device='cpu')
+
+          model=load_model(
+              'yourmt3',
+              device='cpu'
+          )
+
           elapsed=time.monotonic()-t
+
           print('YOURMT3_MODEL_LOADED')
-          files=[p for p in root.rglob('*') if p.is_file() and str(p) not in before]
-          print('MODEL_METRICS='+json.dumps({'first_load_including_download_seconds':elapsed,'cache_new_file_bytes':sum(p.stat().st_size for p in files),'cache_files':[{'name':p.name,'bytes':p.stat().st_size} for p in files]}))
+
+          files=[
+              p
+              for p in root.rglob('*')
+              if p.is_file() and str(p) not in before
+          ]
+
+          print(
+              'MODEL_METRICS='+
+              json.dumps({
+                  'first_load_including_download_seconds': elapsed,
+                  'cache_new_file_bytes': sum(
+                      p.stat().st_size for p in files
+                  ),
+                  'cache_files': [
+                      {
+                          'name': p.name,
+                          'bytes': p.stat().st_size
+                      }
+                      for p in files
+                  ]
+              })
+          )
           """, 1800)
-              metrics = json.loads(next(x[len('MODEL_METRICS='):] for x in text.splitlines() if x.startswith('MODEL_METRICS=')))
+
+              metrics = json.loads(
+                  next(
+                      x[len('MODEL_METRICS='):]
+                      for x in text.splitlines()
+                      if x.startswith('MODEL_METRICS=')
+                  )
+              )
+
               report['metrics'].update(metrics)
+
               passed('MODEL LOAD')
-              # Success plus new nonempty cache artifacts establishes first-use cache population.
-              # This is not an exact checkpoint-only byte measurement (metadata may be included).
+
               if metrics['cache_new_file_bytes'] > 0:
                   passed('MODEL DOWNLOAD')
               else:
                   report['checks']['MODEL DOWNLOAD'] = 'NOT VERIFIED'
+
               report['metrics']['model_download_seconds'] = None
               report['metrics']['model_load_seconds'] = None
-              report['metrics']['timing_note'] = 'Upstream combines download and model loading; separate durations unavailable. Cache bytes include metadata, not necessarily checkpoint-only size.'
+
+              report['metrics']['timing_note'] = (
+                  'Upstream combines download and model loading; '
+                  'separate durations unavailable. '
+                  'Cache bytes include metadata, not necessarily '
+                  'checkpoint-only size.'
+              )
+
               save()
+
               stage('REAL INFERENCE')
-              # Generated audio is only smoke-test input. No MIDI is fabricated here.
+
               inside("""
           import math,struct,wave
+
           sr=16000
-          chords=[(60,64,67),(62,65,69),(59,62,67),(60,64,67)]
+
+          chords=[
+              (60,64,67),
+              (62,65,69),
+              (59,62,67),
+              (60,64,67)
+          ]
+
           with wave.open('/tmp/mt3-smoke.wav','wb') as f:
-              f.setnchannels(1); f.setsampwidth(2); f.setframerate(sr)
+              f.setnchannels(1)
+              f.setsampwidth(2)
+              f.setframerate(sr)
+
               for i in range(sr*8):
-                  t=i/sr; local=t%2
-                  envelope=min(1,local/.015)*math.exp(-2*local)
-                  value=sum(math.sin(2*math.pi*440*2**((n-69)/12)*t) for n in chords[min(3,int(t//2))])/3
-                  f.writeframesraw(struct.pack('<h',int(16000*envelope*value)))
+                  t=i/sr
+                  local=t%2
+
+                  envelope=min(
+                      1,
+                      local/.015
+                  )*math.exp(-2*local)
+
+                  value=sum(
+                      math.sin(
+                          2*math.pi*440*
+                          2**((n-69)/12)*t
+                      )
+                      for n in chords[min(3,int(t//2))]
+                  )/3
+
+                  f.writeframesraw(
+                      struct.pack(
+                          '<h',
+                          int(16000*envelope*value)
+                      )
+                  )
           """)
+
               report['metrics']['input_duration_seconds'] = 8
+
               submitted = inside("""
           import httpx,json
+
           with open('/tmp/mt3-smoke.wav','rb') as f:
-              r=httpx.post('http://127.0.0.1:8000/transcribe',files={'file':('mt3-smoke.wav',f,'audio/wav')},timeout=60)
-          print(r.text); r.raise_for_status()
+              r=httpx.post(
+                  'http://127.0.0.1:8000/transcribe',
+                  files={
+                      'file':(
+                          'mt3-smoke.wav',
+                          f,
+                          'audio/wav'
+                      )
+                  },
+                  timeout=60
+              )
+
+          print(r.text)
+          r.raise_for_status()
+
           print('JOB='+json.dumps(r.json()))
           """)
-              job = json.loads(next(x[4:] for x in submitted.splitlines() if x.startswith('JOB=')))
+
+              job = json.loads(
+                  next(
+                      x[4:]
+                      for x in submitted.splitlines()
+                      if x.startswith('JOB=')
+                  )
+              )
+
               key = job['job_id']
+
               import re
-              if not re.fullmatch('[a-f0-9]{32}',key):
+
+              if not re.fullmatch(
+                  '[a-f0-9]{32}',
+                  key
+              ):
                   raise RuntimeError('Invalid job ID')
+
               deadline = time.monotonic() + 1800
               job_started = time.monotonic()
               previous = None
               inference_seen = None
+
               while time.monotonic() < deadline:
                   state = get('/jobs/' + key)
-                  (out / 'job.json').write_text(json.dumps(state,indent=2))
-                  marker = (state.get('status'),state.get('stage'))
+
+                  (out / 'job.json').write_text(
+                      json.dumps(state,indent=2)
+                  )
+
+                  marker = (
+                      state.get('status'),
+                      state.get('stage')
+                  )
+
                   if marker != previous:
-                      print(json.dumps(state),flush=True)
+                      print(
+                          json.dumps(state),
+                          flush=True
+                      )
                       previous = marker
-                  if state.get('stage') == 'transcribing' and inference_seen is None:
+
+                  if (
+                      state.get('stage') == 'transcribing'
+                      and inference_seen is None
+                  ):
                       inference_seen = time.monotonic()
+
                   if state['status'] == 'failed':
-                      raise RuntimeError('Real job failed: '+json.dumps(state))
+                      raise RuntimeError(
+                          'Real job failed: '+
+                          json.dumps(state)
+                      )
+
                   if state['status'] == 'completed':
                       break
+
                   time.sleep(2)
+
               else:
-                  raise TimeoutError('YourMT3 job did not finish within 1800 seconds')
+                  raise TimeoutError(
+                      'YourMT3 job did not finish within 1800 seconds'
+                  )
+
               health = get('/health')
+
               if health.get('model_loaded') is not True:
-                  raise RuntimeError('Job completed but live service does not report loaded model')
-              report['metrics']['job_wall_seconds'] = time.monotonic()-job_started
+                  raise RuntimeError(
+                      'Job completed but live service '
+                      'does not report loaded model'
+                  )
+
+              report['metrics']['job_wall_seconds'] = (
+                  time.monotonic()-job_started
+              )
+
               report['metrics']['inference_seconds'] = None
-              report['metrics']['observed_transcribing_to_completion_seconds'] = time.monotonic()-inference_seen if inference_seen else None
-              report['metrics']['statistics'] = state.get('statistics')
-              report['metrics']['inference_timing_note'] = 'Job statistics processing_time includes decode/load/save; polling interval is not exact inference duration. Exact start/end timestamps are in container.log.'
+
+              report['metrics'][
+                  'observed_transcribing_to_completion_seconds'
+              ] = (
+                  time.monotonic()-inference_seen
+                  if inference_seen
+                  else None
+              )
+
+              report['metrics']['statistics'] = (
+                  state.get('statistics')
+              )
+
+              report['metrics']['inference_timing_note'] = (
+                  'Job statistics processing_time includes '
+                  'decode/load/save; polling interval is not exact '
+                  'inference duration. Exact start/end timestamps '
+                  'are in container.log.'
+              )
+
               passed('REAL INFERENCE')
+
               stage('MIDI OUTPUT')
+
               inside(f"""
-          import httpx,json,mido
+          import httpx,json
+          import mido
           from pathlib import Path
-          r=httpx.get('http://127.0.0.1:8000/jobs/{key}/midi',timeout=60)
+
+          r=httpx.get(
+              'http://127.0.0.1:8000/jobs/{key}/midi',
+              timeout=60
+          )
+
           r.raise_for_status()
-          p=Path('/tmp/yourmt3-smoke.mid'); p.write_bytes(r.content)
-          if not p.is_file() or p.stat().st_size==0: raise RuntimeError('Missing/empty MIDI')
+
+          p=Path('/tmp/yourmt3-smoke.mid')
+          p.write_bytes(r.content)
+
+          if not p.is_file() or p.stat().st_size==0:
+              raise RuntimeError(
+                  'Missing/empty MIDI'
+              )
+
           midi=mido.MidiFile(p)
-          count=sum(m.type=='note_on' and m.velocity>0 for t in midi.tracks for m in t)
-          metrics={{'midi_size':p.stat().st_size,'midi_tracks':len(midi.tracks),'midi_notes':count,'midi_duration':midi.length}}
+
+          count=sum(
+              m.type=='note_on' and m.velocity>0
+              for t in midi.tracks
+              for m in t
+          )
+
+          metrics={{
+              'midi_size':p.stat().st_size,
+              'midi_tracks':len(midi.tracks),
+              'midi_notes':count,
+              'midi_duration':midi.length
+          }}
+
           print(json.dumps(metrics))
-          Path('/tmp/midi-metrics.json').write_text(json.dumps(metrics))
-          if count==0: raise RuntimeError('Readable MIDI contains zero notes; smoke test failed')
+
+          Path(
+              '/tmp/midi-metrics.json'
+          ).write_text(
+              json.dumps(metrics)
+          )
+
+          if count==0:
+              raise RuntimeError(
+                  'Readable MIDI contains zero notes; '
+                  'smoke test failed'
+              )
           """)
-              command(['docker','cp',container+':/tmp/yourmt3-smoke.mid',str(out/'yourmt3-smoke.mid')])
-              command(['docker','cp',container+':/tmp/midi-metrics.json',str(out/'midi-metrics.json')])
-              report['metrics'].update(json.loads((out/'midi-metrics.json').read_text()))
+
+              command([
+                  'docker',
+                  'cp',
+                  container + ':/tmp/yourmt3-smoke.mid',
+                  str(out / 'yourmt3-smoke.mid')
+              ])
+
+              command([
+                  'docker',
+                  'cp',
+                  container + ':/tmp/midi-metrics.json',
+                  str(out / 'midi-metrics.json')
+              ])
+
+              report['metrics'].update(
+                  json.loads(
+                      (out / 'midi-metrics.json').read_text()
+                  )
+              )
+
               passed('MIDI OUTPUT')
+
           except Exception:
               if active:
                   report['checks'][active] = 'FAIL'
+
               report['error'] = traceback.format_exc()
-              print(report['error'], file=sys.stderr, flush=True)
+
+              print(
+                  report['error'],
+                  file=sys.stderr,
+                  flush=True
+              )
+
               save()
               sys.exit(1)
+
           finally:
               save()
+
           PY
+
           python /tmp/verify-v2.py
 
       - name: Capture logs and print runtime report
@@ -209,21 +550,99 @@ jobs:
         shell: bash
         run: |
           mkdir -p runtime-report
-          docker logs --timestamps sponmusic-ai-transcribe-v2 > runtime-report/container.log 2>&1 || true
-          docker inspect sponmusic-ai-transcribe-v2 > runtime-report/container-inspect.json 2>&1 || true
+
+          docker logs --timestamps sponmusic-ai-transcribe-v2 \
+            > runtime-report/container.log 2>&1 || true
+
+          docker inspect sponmusic-ai-transcribe-v2 \
+            > runtime-report/container-inspect.json 2>&1 || true
+
           cat runtime-report/container.log
+
           python - <<'PY'
-          import json,pathlib,os
-          p=pathlib.Path('runtime-report/report.json')
-          r=json.loads(p.read_text()) if p.exists() else {'checks':{},'error':'Verification interrupted before a report was written.'}
-          lines=['AI TRANSCRIBE V2 RUNTIME REPORT','']
-          for name in ['BUILD','PIP CHECK','IMPORT','HEALTH','MODEL DOWNLOAD','MODEL LOAD','REAL INFERENCE','MIDI OUTPUT','CONTRACT TEST']:
-              lines.append(name+': '+r.get('checks',{}).get(name,'NOT RUN'))
-          lines+=['','Versions:',json.dumps(r.get('versions',{}),indent=2),'','Measurements:',json.dumps(r.get('metrics',{}),indent=2),'','ERROR:',r.get('error') or 'No caught failure. Review checks for NOT RUN / NOT VERIFIED.', '', 'Full service tracebacks: container.log; subprocess output: execution.log.']
-          text='\n'.join(lines)
+          import json
+          import pathlib
+          import os
+
+          p = pathlib.Path('runtime-report/report.json')
+
+          r = (
+              json.loads(p.read_text())
+              if p.exists()
+              else {
+                  'checks': {},
+                  'error': (
+                      'Verification interrupted before '
+                      'a report was written.'
+                  )
+              }
+          )
+
+          lines = [
+              'AI TRANSCRIBE V2 RUNTIME REPORT',
+              ''
+          ]
+
+          for name in [
+              'BUILD',
+              'PIP CHECK',
+              'IMPORT',
+              'HEALTH',
+              'MODEL DOWNLOAD',
+              'MODEL LOAD',
+              'REAL INFERENCE',
+              'MIDI OUTPUT',
+              'CONTRACT TEST'
+          ]:
+              lines.append(
+                  name + ': ' +
+                  r.get('checks', {}).get(
+                      name,
+                      'NOT RUN'
+                  )
+              )
+
+          lines += [
+              '',
+              'Versions:',
+              json.dumps(
+                  r.get('versions', {}),
+                  indent=2
+              ),
+              '',
+              'Measurements:',
+              json.dumps(
+                  r.get('metrics', {}),
+                  indent=2
+              ),
+              '',
+              'ERROR:',
+              r.get('error') or (
+                  'No caught failure. Review checks for '
+                  'NOT RUN / NOT VERIFIED.'
+              ),
+              '',
+              'Full service tracebacks: container.log; '
+              'subprocess output: execution.log.'
+          ]
+
+          text = '\n'.join(lines)
+
           print(text)
-          pathlib.Path('runtime-report/summary.txt').write_text(text)
-          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f: f.write('```text\n'+text+'\n```\n')
+
+          pathlib.Path(
+              'runtime-report/summary.txt'
+          ).write_text(text)
+
+          with open(
+              os.environ['GITHUB_STEP_SUMMARY'],
+              'a'
+          ) as f:
+              f.write(
+                  '```text\n' +
+                  text +
+                  '\n```\n'
+              )
           PY
 
       - name: Remove container and checkpoint volume
