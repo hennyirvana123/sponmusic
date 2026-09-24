@@ -1,8 +1,11 @@
 name: AI Transcribe V2 runtime verification
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   runtime:
     runs-on: ubuntu-22.04
@@ -10,19 +13,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Initialize
+
+      - name: Initialize report
         run: |
           mkdir -p runtime-report
           date +%s > runtime-report/start
-      - name: Build
+
+      - name: Docker build
         id: build
         run: |
           set -o pipefail
           docker build --progress=plain -t sponmusic-ai-transcribe-v2 -f services/ai-transcribe-v2/Dockerfile services/ai-transcribe-v2 2>&1 | tee runtime-report/build.log
+
       - name: Start container
         id: container
         run: |
           docker run -d --name sponmusic-ai-transcribe-v2 -p 8000:8000 -v mt3-checkpoints:/models/mt3 sponmusic-ai-transcribe-v2
+
       - name: Health
         id: health
         run: |
@@ -30,32 +37,37 @@ jobs:
             if curl --fail --silent http://localhost:8000/health -o runtime-report/health.json; then
               cat runtime-report/health.json
               python -c 'import json; h=json.load(open("runtime-report/health.json")); assert h["alive"] and h["engine"]=="mt3-infer" and h["model"]=="yourmt3" and h["device"]=="cpu"'
-              exit $?
+              exit 0
             fi
             sleep 3
           done
           exit 1
+
       - name: Pip check
         id: pip
         run: |
           set -o pipefail
           docker exec sponmusic-ai-transcribe-v2 python -m pip check 2>&1 | tee runtime-report/pip.log
-      - name: Imports and versions
+
+      - name: Imports
         id: imports
         run: |
           set -o pipefail
           docker exec sponmusic-ai-transcribe-v2 python -c 'import sys,mt3_infer,torch,torchaudio; from mt3_infer import load_model,transcribe; from mt3_infer.utils.audio import load_audio; from importlib.metadata import version; print("Python",sys.version); print("mt3-infer",version("mt3-infer")); print("torch",torch.__version__); print("torchaudio",torchaudio.__version__)' 2>&1 | tee runtime-report/imports.log
-      - name: Contract tests
+
+      - name: Contract test
         id: contract
         run: |
           set -o pipefail
           docker run --rm -e MT3_DEVICE=cpu -e PYTHONDONTWRITEBYTECODE=1 -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo sponmusic-ai-transcribe-v2 python services/ai-transcribe-v2/test_contract.py 2>&1 | tee runtime-report/contract.log
-      - name: YourMT3 load and checkpoint download
+
+      - name: YourMT3 CPU model load and download
         id: model
         timeout-minutes: 30
         run: |
           set -o pipefail
           docker exec sponmusic-ai-transcribe-v2 python -u -c 'import os,time; from pathlib import Path; from mt3_infer import load_model; start=time.monotonic(); model=load_model("yourmt3",device="cpu"); print("YOURMT3_MODEL_LOADED"); print("Load including download seconds",time.monotonic()-start); files=[p for p in Path(os.environ["MT3_CHECKPOINT_DIR"]).rglob("*") if p.is_file()]; print("Cache bytes including metadata",sum(p.stat().st_size for p in files)); print("Separate download timing unavailable")' 2>&1 | tee runtime-report/model.log
+
       - name: Real inference
         id: inference
         timeout-minutes: 35
@@ -70,53 +82,54 @@ jobs:
           rate = 16000
           chords = [(60,64,67),(62,65,69),(59,62,67),(60,64,67)]
           with wave.open('/tmp/smoke.wav','wb') as output:
-              output.setnchannels(1)
-              output.setsampwidth(2)
-              output.setframerate(rate)
-              data = bytearray()
-              for i in range(rate*8):
-                  t = i/rate
-                  local = t%2
-                  envelope = min(1,local/.015)*math.exp(-2*local)
-                  value = sum(math.sin(2*math.pi*440*2**((n-69)/12)*t) for n in chords[min(3,int(t//2))])/3
-                  data.extend(struct.pack('<h',int(16000*envelope*value)))
-              output.writeframes(data)
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(rate)
+            data = bytearray()
+            for i in range(rate*8):
+              t = i/rate
+              local = t%2
+              envelope = min(1,local/.015)*math.exp(-2*local)
+              value = sum(math.sin(2*math.pi*440*2**((n-69)/12)*t) for n in chords[min(3,int(t//2))])/3
+              data.extend(struct.pack('<h',int(16000*envelope*value)))
+            output.writeframes(data)
           print('Input duration 8 seconds',flush=True)
           start = time.monotonic()
           base = 'http://127.0.0.1:8000'
           with httpx.Client(timeout=60) as client:
-              with open('/tmp/smoke.wav','rb') as audio:
-                  response = client.post(base+'/transcribe',files={'file':('smoke.wav',audio,'audio/wav')})
-              print(response.text,flush=True)
+            with open('/tmp/smoke.wav','rb') as audio:
+              response = client.post(base+'/transcribe',files={'file':('smoke.wav',audio,'audio/wav')})
+            print(response.text,flush=True)
+            response.raise_for_status()
+            key = response.json()['job_id']
+            deadline = time.monotonic()+1800
+            previous = None
+            while time.monotonic()<deadline:
+              response = client.get(base+'/jobs/'+key)
               response.raise_for_status()
-              key = response.json()['job_id']
-              deadline = time.monotonic()+1800
-              previous = None
-              while time.monotonic()<deadline:
-                  response = client.get(base+'/jobs/'+key)
-                  response.raise_for_status()
-                  state = response.json()
-                  if state != previous:
-                      print(json.dumps(state),flush=True)
-                      previous = state
-                  if state['status']=='failed':
-                      raise RuntimeError(json.dumps(state))
-                  if state['status']=='completed':
-                      break
-                  time.sleep(2)
-              else:
-                  raise TimeoutError('Inference exceeded 1800 seconds')
-              response = client.get(base+'/health')
-              response.raise_for_status()
-              assert response.json()['model_loaded'] is True
-              print('Job wall seconds',time.monotonic()-start,flush=True)
-              print('Pure inference timing unavailable; job includes decode/load/save',flush=True)
-              with open('/tmp/job-id','w') as output:
-                  output.write(key)
+              state = response.json()
+              if state != previous:
+                print(json.dumps(state),flush=True)
+                previous = state
+              if state['status']=='failed':
+                raise RuntimeError(json.dumps(state))
+              if state['status']=='completed':
+                break
+              time.sleep(2)
+            else:
+              raise TimeoutError('Inference exceeded 1800 seconds')
+            response = client.get(base+'/health')
+            response.raise_for_status()
+            assert response.json()['model_loaded'] is True
+            print('Job wall seconds',time.monotonic()-start,flush=True)
+            print('Pure inference timing unavailable; job includes decode/load/save',flush=True)
+            with open('/tmp/job-id','w') as output:
+              output.write(key)
           PY
           docker cp runtime-report/smoke.py sponmusic-ai-transcribe-v2:/tmp/smoke.py
           set -o pipefail
           docker exec sponmusic-ai-transcribe-v2 python -u /tmp/smoke.py 2>&1 | tee runtime-report/inference.log
+
       - name: MIDI output
         id: midi
         run: |
@@ -142,6 +155,7 @@ jobs:
           set -o pipefail
           docker exec sponmusic-ai-transcribe-v2 python -u /tmp/check-midi.py 2>&1 | tee runtime-report/midi.log
           docker cp sponmusic-ai-transcribe-v2:/tmp/yourmt3-smoke.mid runtime-report/yourmt3-smoke.mid
+
       - name: Report and logs
         if: always()
         env:
@@ -164,30 +178,32 @@ jobs:
           from pathlib import Path
           lines = ['AI TRANSCRIBE V2 RUNTIME REPORT']
           for name in ['BUILD','CONTAINER','HEALTH','PIP_CHECK','IMPORT','CONTRACT_TEST','MODEL_LOAD_DOWNLOAD','REAL_INFERENCE','MIDI_OUTPUT']:
-              outcome = os.environ.get(name,'')
-              status = {'success':'PASS','failure':'FAIL','skipped':'NOT RUN','cancelled':'CANCELLED'}.get(outcome,'NOT RUN')
-              lines.append(name+': '+status)
+            outcome = os.environ.get(name,'')
+            status = {'success':'PASS','failure':'FAIL','skipped':'NOT RUN','cancelled':'CANCELLED'}.get(outcome,'NOT RUN')
+            lines.append(name+': '+status)
           lines.append('MODEL_LOAD_DOWNLOAD combines first-use model loading and download; separate download telemetry is unavailable.')
           lines.append('Tracebacks and measurements are preserved in log artifacts. No inference quality claim is made.')
           start = Path('runtime-report/start')
           if start.exists():
-              lines.append('Total seconds: '+str(int(time.time())-int(start.read_text())))
+            lines.append('Total seconds: '+str(int(time.time())-int(start.read_text())))
           text = chr(10).join(lines)
           print(text)
           Path('runtime-report/summary.txt').write_text(text)
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as output:
-              output.write(text)
+            output.write(text)
           PY
           for log in runtime-report/*.log; do
             echo "$log"
             cat "$log"
           done
+
       - name: Cleanup
         if: always()
         run: |
           docker rm -f sponmusic-ai-transcribe-v2 || true
           docker volume rm mt3-checkpoints || true
-      - name: Upload artifacts
+
+      - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
