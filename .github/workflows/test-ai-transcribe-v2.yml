@@ -129,15 +129,18 @@ jobs:
           docker cp runtime-report/smoke.py sponmusic-ai-transcribe-v2:/tmp/smoke.py
           set -o pipefail
           docker exec sponmusic-ai-transcribe-v2 python -u /tmp/smoke.py 2>&1 | tee runtime-report/inference.log
+          docker cp sponmusic-ai-transcribe-v2:/tmp/job-id runtime-report/job-id
 
       - name: MIDI output
         id: midi
         run: |
+          job_id=$(cat runtime-report/job-id)
           cat > runtime-report/check-midi.py <<'PY'
           from pathlib import Path
+          import sys
           import httpx
           import mido
-          key = Path('/tmp/job-id').read_text()
+          key = sys.argv[1]
           response = httpx.get('http://127.0.0.1:8000/jobs/'+key+'/midi',timeout=60)
           response.raise_for_status()
           path = Path('/tmp/yourmt3-smoke.mid')
@@ -153,7 +156,7 @@ jobs:
           PY
           docker cp runtime-report/check-midi.py sponmusic-ai-transcribe-v2:/tmp/check-midi.py
           set -o pipefail
-          docker exec sponmusic-ai-transcribe-v2 python -u /tmp/check-midi.py 2>&1 | tee runtime-report/midi.log
+          docker exec sponmusic-ai-transcribe-v2 python -u /tmp/check-midi.py "$job_id" 2>&1 | tee runtime-report/midi.log
           docker cp sponmusic-ai-transcribe-v2:/tmp/yourmt3-smoke.mid runtime-report/yourmt3-smoke.mid
 
       - name: Report and logs
