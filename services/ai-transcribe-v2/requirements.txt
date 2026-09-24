@@ -1,0 +1,6 @@
+mt3-infer[torch]
+fastapi
+uvicorn
+python-multipart
+mido
+httpx
