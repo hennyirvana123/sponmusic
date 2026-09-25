@@ -1,12 +1,38 @@
 FROM python:3.10-slim-bookworm
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8000 HOME=/home/worker NUMBA_CACHE_DIR=/home/worker/.cache/numba OMP_NUM_THREADS=2 MKL_NUM_THREADS=2
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfile1 libgomp1 && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8000 \
+    HOME=/home/worker \
+    NUMBA_CACHE_DIR=/home/worker/.cache/numba \
+    OMP_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
+
 COPY requirements.txt ./
+
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.1.2+cpu
+
 RUN pip install --no-cache-dir -r requirements.txt && pip check
+
 COPY app.py piano_amt.py test_contract.py ./
-RUN python -m py_compile app.py piano_amt.py test_contract.py && python -m unittest test_contract
-RUN useradd --create-home worker && mkdir -p /home/worker/.cache/numba && chown -R worker:worker /home/worker/.cache
+
+RUN python -m py_compile app.py piano_amt.py test_contract.py \
+    && python -m unittest test_contract
+
+RUN useradd --create-home worker \
+    && mkdir -p /home/worker/.cache/numba \
+    && chown -R worker:worker /home/worker/.cache
+
 USER worker
+
 EXPOSE 8000
+
 CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --limit-concurrency 4"]

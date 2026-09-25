@@ -23,14 +23,17 @@ export default function PianoFaithful() {
         if (!response.ok) { const body = await response.json(); throw Error(body.message || `HTTP ${response.status}`); }
         return response;
       };
-      const job = await (await request('submit', {method: 'POST', headers: {'Content-Type': /\.wav$/i.test(file.name) ? 'audio/wav' : 'audio/mpeg'}, body: file})).json();
+      const form = new FormData();
+      form.append('audio', file);
+      form.append('task', 'piano_faithful');
+      const job = await (await request('transcribe', {method: 'POST', body: form})).json();
       if (!/^[a-f0-9]{32}$/.test(job.job_id)) throw Error('Invalid job ID');
       while (true) {
-        const state = await (await request(job.job_id)).json(); setReport(state);
+        const state = await (await request('transcribe/' + job.job_id)).json(); setReport(state);
         if (state.status === 'failed') throw Error(`${state.error?.code}: ${state.error?.stage}`);
         if (state.status === 'completed') {
-          const raw = await (await request(job.job_id + '/download/raw')).blob();
-          const cleaned = await (await request(job.job_id + '/download/cleaned')).blob();
+          const raw = await (await request('transcribe/' + job.job_id + '/download/raw')).blob();
+          const cleaned = await (await request('transcribe/' + job.job_id + '/download/cleaned')).blob();
           setResult({raw, cleaned}); setMessage('MIDI tersedia. Kualitas belum dinilai; bandingkan dengan audio asli.'); break;
         }
         if (!['queued', 'processing'].includes(state.status)) throw Error('Invalid job status');
@@ -52,7 +55,8 @@ export default function PianoFaithful() {
   return <main className="min-h-screen bg-violet-950 p-6 text-violet-50"><section className="mx-auto max-w-3xl space-y-5 rounded-2xl border border-violet-700 bg-violet-900 p-6">
     <p className="text-sm text-violet-200">SPONMUSIC · Eksperimen A/B</p><h1 className="text-3xl font-semibold">Piano faithful · CPU AMT</h1>
     <p>Piano solo saja, 0,25–60 detik. Tanpa Demucs, pYIN, atau aransemen ulang. Basic Pitch production tidak diganti.</p>
-    <input aria-label="Audio piano solo" className="block w-full rounded-xl border border-violet-500 p-3" type="file" accept=".mp3,.wav" disabled={busy} onChange={e => {setFile(e.target.files?.[0] || null); setResult(null);}} />
+    <input aria-label="Audio piano solo" className="block w-full rounded-xl border border-violet-500 p-3" type="file" accept=".mp3,.wav" disabled={busy} onChange={e => {setFile(e.target.files?.[0] || null); setResult(null); setReport(null); setMessage('');}} />
+    {file && <p className="text-sm text-violet-200">{file.name}</p>}
     <Button className="rounded-xl bg-violet-100 text-violet-950 hover:bg-white" disabled={!file || busy} onClick={() => void run()}>{busy ? 'Memproses…' : 'Jalankan piano faithful'}</Button>
     <p role="status" className="break-words">{message}</p>
     {report && <pre className="overflow-auto rounded-xl bg-violet-950 p-4 text-xs">{JSON.stringify(report, null, 2)}</pre>}

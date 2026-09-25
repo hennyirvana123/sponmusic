@@ -24,6 +24,7 @@ const App = () => (
           <Route path="/studio" element={<Index />} />
           <Route path="/ai-arrangement" element={<Arrangement />} />
           <Route path="/experiments/piano-faithful" element={<PianoFaithful />} />
+          <Route path="/piano-faithful" element={<PianoFaithful />} />
           {import.meta.env.DEV && <Route path="/dev/audio-diagnostic" element={<AudioDiagnostic />} />}
           <Route path="*" element={<NotFound />} />
         </Routes>
