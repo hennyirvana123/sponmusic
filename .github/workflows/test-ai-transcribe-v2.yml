@@ -10,7 +10,7 @@ steps:
 - name: Checkout
 uses: actions/checkout@v4
 
-```
+
   - name: Test
     run: |
       echo "YAML WORKFLOW OK"
@@ -18,4 +18,4 @@ uses: actions/checkout@v4
       echo "Commit: $GITHUB_SHA"
       docker --version
       python3 --version
-```
+
