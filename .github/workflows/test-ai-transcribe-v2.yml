@@ -1,19 +1,19 @@
 name: AI Transcribe V2 YAML test
 
 on:
-  workflow_dispatch:
+workflow_dispatch:
 
 jobs:
-  test:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+test:
+runs-on: ubuntu-22.04
+steps:
+- name: Checkout
+uses: actions/checkout@v4
 
-      - name: Test
-        run: |
-          echo "YAML WORKFLOW OK"
-          echo "Repository: $GITHUB_REPOSITORY"
-          echo "Commit: $GITHUB_SHA"
-          docker --version
-          python3 --version
+  - name: Test
+    run: |
+      echo "YAML WORKFLOW OK"
+      echo "Repository: $GITHUB_REPOSITORY"
+      echo "Commit: $GITHUB_SHA"
+      docker --version
+      python3 --version
