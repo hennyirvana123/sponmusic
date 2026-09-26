@@ -63,3 +63,13 @@ Real acceptance still requires first checkpoint load, real audio inference, outp
 ## Runtime diagnostics
 
 GET /diagnostics reports Python and installed distribution versions without importing or loading the model. Missing distributions return null. Model state comes from the adapter. checkpoint_directory_exists only checks the directory; checkpoint_verified is null because no checkpoint filename/hash contract has been verified. An existing cache directory does not prove downloaded weights. Diagnostics does not run inference. The diagnostics contract test has not been executed in the authoring environment.
+
+## Standalone real-model smoke test
+
+`smoke_test.py` is an explicit runtime entry point, included in the image at `/app/smoke_test.py`. It is only syntax-compiled during build, never run by build, startup, health, diagnostics or contract tests. No HTTP smoke-test endpoint is added.
+
+The script generates six seconds of mono PCM WAV notes/chords using the Python standard library, loads `yourmt3` on CPU, then invokes the documented audio loader, model transcription and MIDI save API. Only audio is synthesized: MIDI must come from YourMT3. It measures model load time (including any first-use download), inference call time, decoded input duration/rate, MIDI tracks, notes, duration and byte size. Temporary WAV/MIDI files are removed on success or exception; the upstream checkpoint cache is retained.
+
+Failures propagate with their original traceback and nonzero exit status. An empty, unreadable or zero-note MIDI fails output validation. A passing synthetic-audio smoke test proves execution only, not fidelity on real recordings. No checkpoint location/hash is guessed or verified. Provision a writable MT3_CHECKPOINT_DIR (default /models/mt3), required runtime dependencies and first-use network access before explicit execution. Avoid running alongside an active service inference because this process loads its own model.
+
+Authoring status: script created; Python execution, contract tests, model load, inference and MIDI output NOT RUN. No new dependency added.

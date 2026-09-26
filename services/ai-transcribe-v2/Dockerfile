@@ -5,8 +5,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt && pip check
 RUN python -c "from mt3_infer import transcribe, load_model; from mt3_infer.utils.audio import load_audio; from importlib.metadata import version; print('mt3-infer:', version('mt3-infer')); print('torch:', version('torch'))"
-COPY app.py transcriber.py test_contract.py ./
-RUN python -m py_compile app.py transcriber.py test_contract.py && python -m unittest test_contract
+COPY app.py transcriber.py test_contract.py smoke_test.py ./
+RUN python -m py_compile app.py transcriber.py test_contract.py smoke_test.py && python -m unittest test_contract
 RUN useradd --create-home worker && mkdir -p /models/mt3 && chown -R worker:worker /models
 USER worker
 EXPOSE 8000
