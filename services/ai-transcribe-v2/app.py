@@ -80,6 +80,31 @@ def create_app(transcriber=None):
         return {'alive': True, 'engine': 'mt3-infer', 'model': 'yourmt3',
                 'model_loaded': engine.model is not None, 'device': engine.device}
 
+    @app.get('/diagnostics')
+    async def diagnostics():
+        import os
+        import platform
+        from importlib.metadata import PackageNotFoundError, version
+
+        versions = {}
+        for package in ('mt3-infer', 'torch', 'torchaudio'):
+            try:
+                versions[package] = version(package)
+            except PackageNotFoundError:
+                versions[package] = None
+        cache = Path(os.environ.get('MT3_CHECKPOINT_DIR', '/models/mt3'))
+        return {
+            'python': platform.python_version(),
+            'versions': versions,
+            'engine': 'mt3-infer',
+            'model': 'yourmt3',
+            'device': engine.device,
+            'model_loaded': engine.model is not None,
+            'checkpoint_directory': str(cache),
+            'checkpoint_directory_exists': cache.is_dir(),
+            'checkpoint_verified': None,
+        }
+
     @app.post('/transcribe', status_code=202)
     async def transcribe(file: UploadFile = File(...)):
         directory = None

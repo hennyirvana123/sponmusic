@@ -35,6 +35,16 @@ class ContractTests(unittest.TestCase):
             'alive': True, 'engine': 'mt3-infer', 'model': 'yourmt3',
             'model_loaded': False, 'device': 'cpu'})
 
+    def test_diagnostics_does_not_load_model(self):
+        response = self.client.get('/diagnostics')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['model'], 'yourmt3')
+        self.assertFalse(data['model_loaded'])
+        self.assertIsNone(data['checkpoint_verified'])
+        self.assertIn('python', data)
+        self.assertEqual(set(data['versions']), {'mt3-infer', 'torch', 'torchaudio'})
+
     def test_validation(self):
         self.assertEqual(self.client.post('/transcribe').status_code, 422)
         self.assertEqual(self.client.post('/transcribe', files={'file': ('bad.exe', b'test')}).status_code, 415)

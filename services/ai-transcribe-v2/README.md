@@ -59,3 +59,7 @@ python -m unittest test_contract
 httpx is used by FastAPI TestClient; mido is used for read-only MIDI statistics and a clearly isolated test fixture. Tests inject a model-free adapter: their tiny MIDI is solely a transport fixture, never a real transcription or a production fallback. No real audio/model is used. Tests check health, validation, jobs, missing IDs, download, route isolation, and production-tree immutability during test execution when that tree is available. They cannot prove a Git diff is production-free; review changed paths separately. Docker omits production files, so that filesystem check is skipped there.
 
 Real acceptance still requires first checkpoint load, real audio inference, output tracks/notes/programs inspection, memory/latency measurement and listening. No quality or runtime success claim is made.
+
+## Runtime diagnostics
+
+GET /diagnostics reports Python and installed distribution versions without importing or loading the model. Missing distributions return null. Model state comes from the adapter. checkpoint_directory_exists only checks the directory; checkpoint_verified is null because no checkpoint filename/hash contract has been verified. An existing cache directory does not prove downloaded weights. Diagnostics does not run inference. The diagnostics contract test has not been executed in the authoring environment.
