@@ -77,8 +77,11 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn('/api/piano/transcribe', paths)
 
     def test_contract_execution_does_not_touch_production_files(self):
-        root = Path(__file__).resolve().parents[2]
-        if not (root / 'src').exists():
+        root = next((parent for parent in Path(__file__).resolve().parents
+                     if (parent / 'src').is_dir()
+                     and (parent / 'services/ai-transcribe-v2/test_contract.py').resolve()
+                     == Path(__file__).resolve()), None)
+        if root is None:
             self.skipTest('Production tree not included in isolated Docker context')
         targets = [root / 'src', root / 'server', root / 'services/basic-pitch',
                    root / 'services/piano-faithful', root / 'services/source-separation']
